@@ -8,9 +8,6 @@ process RunFastSpliceAi {
     output:
     tuple val(cohort), path(vcf), path(vcf_index), path("cache_additions.vcf.gz"), path("cache_additions.vcf.gz.tbi"), emit: additions
 
-    when:
-    cache_status.getText().trim().toInteger() > 0
-
     script:
     """
     set -euo pipefail
