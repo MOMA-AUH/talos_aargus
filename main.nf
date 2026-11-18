@@ -85,9 +85,12 @@ workflow {
 		ch_gff,
 		ch_ref_genome,
 		ch_talos_combined,
+        true,
+        ANNOTATION.out.fastspliceai_annotation,
 	)
 
 	publish:
+        metadata = TALOS.out.metadata
 		vcfs = ANNOTATION.out.vcfs
 	html = TALOS.out.html
 		json = TALOS.out.json
@@ -96,19 +99,28 @@ workflow {
 }
 
 output {
+    metadata {
+        mode 'copy'
+        path { id, _metadata -> "${id}/outputs" }
+    }
 	vcfs {
-		path { id, _vcfs -> "${id}_outputs" }
+		mode 'copy'
+		path { id, _vcfs -> "${id}/outputs" }
 	}
 	html {
-		path { id, _html -> "${id}_outputs" }
+		mode 'copy'
+		path { id, _html -> "${id}/outputs" }
 	}
 	json {
-		path { id, _json -> "${id}_outputs" }
+		mode 'copy'
+		path { id, _json -> "${id}/outputs" }
 	}
 	panelapp {
-		path { id, _panelapp -> "${id}_outputs" }
+		mode 'copy'
+		path { id, _panelapp -> "${id}/outputs" }
 	}
 	labelled {
-		path { id, _labelled, _labelled_idx -> "${id}_outputs" }
+		mode 'copy'
+		path { id, _labelled, _labelled_idx -> "${id}/outputs" }
 	}
 }

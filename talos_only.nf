@@ -31,7 +31,7 @@ workflow {
 		.splitCsv(header: true, sep: '\t')
 		.map { row -> tuple(
 			row.cohort,
-			files("${workflow.outputDir}/${row.cohort}_outputs/*_csq.vcf.bgz"),
+			files("${workflow.outputDir}/${row.cohort}/outputs/*_csq.vcf.bgz"),
 			file(row.pedigree, checkIfExists: true),
 			file(row.config, checkIfExists: true),
 			file(row.history ?: "${projectDir}/nextflow/assets/NO_HISTORY", checkIfExists: true),
@@ -45,22 +45,32 @@ workflow {
 		ch_gff,
         ch_ref_genome,
 		ch_inputs,
+        false,
+        channel.value(null),
 	)
 
 	publish:
+        metadata = TALOS.out.metadata
 	html = TALOS.out.html
 		json = TALOS.out.json
 		panelapp = TALOS.out.panelapp
 }
 
 output {
+    metadata {
+        mode 'copy'
+        path { id, _metadata -> "${id}/outputs" }
+    }
 	html {
-		path { id, html -> "${id}_outputs" }
+		mode 'copy'
+		path { id, html -> "${id}/outputs" }
 	}
 	json {
-		path { id, json -> "${id}_outputs" }
+		mode 'copy'
+		path { id, json -> "${id}/outputs" }
 	}
 	panelapp {
-		path { id, panelapp -> "${id}_outputs" }
+		mode 'copy'
+		path { id, panelapp -> "${id}/outputs" }
 	}
 }

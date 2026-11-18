@@ -14,6 +14,8 @@ The data prepared in this workflow is:
 
 nextflow.enable.dsl=2
 
+include { preparedResourceFingerprint } from './nextflow/modules/talos/WorkflowMetadata/main'
+
 include { AnnotateClinvarWithBcftools } from './nextflow/modules/prep/AnnotateClinvarWithBcftools/main'
 include { CreateRoiFromGff3 } from './nextflow/modules/prep/CreateRoiFromGff3/main'
 include { DownloadClinVarFiles } from './nextflow/modules/prep/DownloadClinVarFiles/main'
@@ -22,10 +24,84 @@ include { EncodeAlphaMissense } from './nextflow/modules/prep/EncodeAlphaMissens
 include { EncodeMitimpact } from './nextflow/modules/prep/EncodeMitimpact/main'
 include { EncodeMitotip } from './nextflow/modules/prep/EncodeMitotip/main'
 include { EncodeNapogee } from './nextflow/modules/prep/EncodeNapogee/main'
+include { HashResource } from './nextflow/modules/prep/HashResource/main'
 include { MakeClinvarbitrationPm5 } from './nextflow/modules/prep/MakeClinvarbitrationPm5/main'
 include { ResummariseRawSubmissions } from './nextflow/modules/prep/ResummariseRawSubmissions/main'
 include { ParseManeIntoJson } from './nextflow/modules/prep/ParseManeIntoJson/main'
+include { WritePreparedResourceCatalog } from './nextflow/modules/prep/WritePreparedResourceCatalog/main'
 
+
+def preparedResourceDeclarations(paths) {
+    def requiredText = { value, label ->
+        if (!(value instanceof CharSequence) || !value.toString().trim()) {
+            throw new IllegalArgumentException("Set params.${label} to a nonempty string for AARgus metadata")
+        }
+        value.toString()
+    }
+    // binding: [version parameter, display name]
+    def resources = [
+        mane_json: ['mane_version', 'MANE'],
+        ensembl_gff: ['ensembl_version', 'Ensembl'],
+        gnomad_zip: ['gnomad_version', 'gnomAD'],
+        alphamissense_zip: ['alphamissense_version', 'AlphaMissense'],
+        clinvar: ['clinvar_version', 'ClinVar'],
+        pm5: ['clinvar_version', 'PM5'],
+        hpo: ['hpo_version', 'HPO'],
+        gen2phen: ['gen2phen_version', 'HPO-G2P'],
+        phenio_db: ['phenio_version', 'Phenio'],
+        mitimpact: ['mitimpact_version', 'MitImpact'],
+        mitotip: ['mitotip_version', 'MitoTIP'],
+        napogee: ['napogee_version', 'nAPOGEE']
+    ]
+    paths.collect { binding, observed ->
+        def resource = resources[binding]
+        if (resource == null) throw new IllegalArgumentException("No AARgus metadata resource mapping for ${binding}")
+        def declaration = [parameter: binding, path: file(observed, checkIfExists: true).toRealPath().toString(),
+            name: resource[1], version: requiredText.call(params[resource[0]], resource[0])]
+        declaration
+    }
+}
+
+def preparationMetadataPlan(stored, destination, timestamp) {
+    def paths = [
+        mane_json: stored['mane.json'],
+        ensembl_gff: file(params.ensembl_gff, checkIfExists: true),
+        gnomad_zip: file(params.gnomad_zip, checkIfExists: true),
+        alphamissense_zip: stored['alphamissense.zip'],
+        clinvar: stored["clinvarbitration_${timestamp}.vcf.bgz".toString()],
+        pm5: stored["clinvarbitration_${timestamp}.pm5.tsv".toString()],
+        hpo: file(params.hpo, checkIfExists: true),
+        gen2phen: file(params.gen2phen, checkIfExists: true),
+        phenio_db: file(params.phenio_db, checkIfExists: true),
+        mitimpact: stored['mitimpact.zip'],
+        mitotip: stored['mitotip.zip'],
+        napogee: stored['napogee.zip']
+    ].collectEntries { binding, source -> [binding, source.toRealPath().toString()] }
+    def declarations
+    if (params.aargus_metadata_spec) {
+        def specification = file(params.aargus_metadata_spec, checkIfExists: true).toRealPath()
+        def explicit = new groovy.json.JsonSlurper().parse(specification.toFile())
+        if (explicit.assembly != params.ref_genome_assembly) throw new IllegalArgumentException('Metadata specification assembly differs from ref_genome_assembly')
+        declarations = (explicit.resources ?: []).collect { resource ->
+            def captured = resource.subMap(['name', 'version', 'path', 'parameter'])
+            if (!(captured.version instanceof CharSequence) || !captured.version.toString().trim()) {
+                throw new IllegalArgumentException("Set resource ${captured.name} version before preparation")
+            }
+            def source = java.nio.file.Paths.get(captured.path)
+            captured.path = file(source.isAbsolute() ? source : specification.parent.resolve(source), checkIfExists: true).toRealPath().toString()
+            captured
+        }
+    } else {
+        declarations = preparedResourceDeclarations(paths)
+    }
+    def catalog = [profile: 'talos/prepared-resources/2', assembly: params.ref_genome_assembly, resources: declarations]
+    def inputs = declarations.collect { file(it.path, checkIfExists: true) }
+    inputs = inputs.collect { it.toRealPath() }.unique().sort { it.toString() }
+    def to_hash = inputs.collect { source ->
+        tuple(source.toString(), source, preparedResourceFingerprint(source))
+    }
+    [catalog: catalog, hash_inputs: to_hash]
+}
 
 workflow {
     main:
@@ -158,42 +234,44 @@ workflow {
         panelapp_out = channel.fromPath(current_panelapp, checkIfExists: true)
     }
 
-    // use workflow outputs, not individual copies
+    // Hash the existing task outputs; normal publishing copies resources once.
+    def destination = file(workflow.outputDir).toAbsolutePath().toString()
+    ch_prepared_files = ch_alphamissense_zip.mix(ch_bed, ch_merged_bed, ch_symbol_lookup,
+        ch_clinvar_all, ch_clinvar_pm5, ch_mitimpact_zip, ch_mitotip_zip, ch_mane_json, ch_napogee_zip, panelapp_out)
+        .flatMap { value -> (value instanceof Collection) ? value : [value] }
+        .map { source -> tuple(java.nio.file.Paths.get(source.toString()).getFileName().toString(), source) }
+    ch_metadata_plan = ch_prepared_files.toList().map { entries ->
+        def stored = entries.collectEntries { name, source -> [name, source] }
+        preparationMetadataPlan(stored, destination, timestamp)
+    }
+    HashResource(ch_metadata_plan.flatMap { it.hash_inputs })
+    ch_receipts = HashResource.out
+        .map { source, receipt -> [source: source, receipt: receipt] }.toList()
+    ch_catalog_inputs = ch_metadata_plan.combine(ch_receipts.map { [receipts: it] }).map { plan, received ->
+        def catalog = new LinkedHashMap(plan.catalog)
+        def hashes = received.receipts.collectEntries { entry ->
+            def receipt = new groovy.json.JsonSlurper().parse(entry.receipt.toFile())
+            [entry.source, receipt.sha256]
+        }
+        catalog.resources = catalog.resources.collect { resource ->
+            def captured = resource.subMap(['name', 'version', 'parameter'])
+            captured.sha256 = hashes[resource.path]
+            captured
+        }
+        catalog
+    }
+    WritePreparedResourceCatalog(ch_catalog_inputs)
+
     publish:
-        alphamissense = ch_alphamissense_zip
-        bed = ch_bed
-        merged_bed = ch_merged_bed
-        symbol_lookup = ch_symbol_lookup
-        clinvar_all = ch_clinvar_all
-        clinvar_pm5 = ch_clinvar_pm5
-        mitimpact = ch_mitimpact_zip
-        mitotip = ch_mitotip_zip
-        mane_json = ch_mane_json
-        napogee = ch_napogee_zip
-        panelapp_out = panelapp_out
+        resources = ch_prepared_files.map { name, source -> source }
+        metadata = WritePreparedResourceCatalog.out
 }
 
 output {
-    alphamissense {
+    resources {
+        mode 'copy'
     }
-    bed {
-    }
-    merged_bed {
-    }
-    symbol_lookup {
-    }
-    clinvar_all {
-    }
-    clinvar_pm5 {
-    }
-    mane_json {
-    }
-    mitimpact {
-    }
-    mitotip {
-    }
-    napogee {
-    }
-    panelapp_out {
+    metadata {
+        mode 'copy'
     }
 }

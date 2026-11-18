@@ -9,9 +9,62 @@ include { ValidateMOI } from './modules/talos/ValidateMOI/main'
 include { HPOFlagging } from './modules/talos/HPOFlagging/main'
 include { CreateTalosHTML } from './modules/talos/CreateTalosHTML/main'
 include { StartupChecks } from './modules/talos/StartupChecks/main'
+include { WorkflowMetadata; WriteWorkflowMetadataSpecification } from './modules/talos/WorkflowMetadata/main'
 
 def processedAnnotationPath(String name) {
     return file("${params.processed_annotations}/${name}")
+}
+
+def preparedMetadataCatalog() {
+    try {
+        def path = processedAnnotationPath('resources.metadata/resources.json')
+        def catalog = new groovy.json.JsonSlurper().parse(path.toFile())
+        if (catalog.profile != 'talos/prepared-resources/2' || !(catalog.resources instanceof List)) {
+            throw new IllegalArgumentException('Invalid prepared resource catalog')
+        }
+        if (catalog.assembly != params.ref_genome_assembly) {
+            throw new IllegalArgumentException('Prepared assembly differs from ref_genome_assembly')
+        }
+        if (catalog.resources.any { !(it.sha256 instanceof String) || !(it.sha256 ==~ /[0-9a-f]{64}/) }) {
+            throw new IllegalArgumentException('Prepared resources require SHA256 hashes')
+        }
+        catalog
+    } catch (Exception error) {
+        throw new IllegalArgumentException("Prepared resource catalog is missing or incompatible (${error.message}); run preparation.nf", error)
+    }
+}
+
+def selectedPreparedMetadata(actual, catalog, explicit) {
+    def requested = explicit != null ? (explicit.resources ?: []) : actual.resource_paths.collect { binding, path ->
+        [parameter: binding]
+    }
+    if (explicit != null && explicit.assembly != catalog.assembly) {
+        throw new IllegalArgumentException('Metadata override assembly differs from prepared resources; run preparation.nf')
+    }
+    def resources = requested.collect { resource ->
+        if (resource.parameter == 'fastspliceai_annotation' && actual.resource_paths.fastspliceai_annotation) {
+            // Generated during this analysis: hash the table used by the scorer,
+            // rather than reusing a prepared identity for a bundled transcript table.
+            return [name: resource.name ?: 'FastSpliceAI', version: params.ensembl_version,
+                path: actual.resource_paths.fastspliceai_annotation, parameter: 'fastspliceai_annotation']
+        }
+        def matches = catalog.resources.findAll {
+            resource.parameter != null ? it.parameter == resource.parameter : it.name == resource.name
+        }
+        if (matches.size() != 1 || (resource.version != null && matches[0].version != resource.version)) {
+            throw new IllegalArgumentException("No prepared resource identity for ${resource.parameter ?: resource.name}; run preparation.nf")
+        }
+        def captured = new LinkedHashMap(matches[0])
+        if (resource.name != null) captured.name = resource.name
+        captured
+    }
+    actual.resource_paths.each { binding, path ->
+        if (!resources.any { it.parameter == binding }) {
+            throw new IllegalArgumentException("Metadata must select the prepared ${binding} input; run preparation.nf")
+        }
+    }
+    def specification = [assembly: catalog.assembly, resources: resources]
+    specification
 }
 
 workflow TALOS {
@@ -20,6 +73,8 @@ workflow TALOS {
 		ch_gff
 		ch_ref_genome
 		ch_vcfs
+        annotation_performed
+        ch_fastspliceai_annotation
 
     main:
     // existence of these files is necessary for starting the workflow
@@ -164,7 +219,62 @@ workflow TALOS {
         timestamp,
     )
 
+    def prepared_catalog = preparedMetadataCatalog()
+    ch_metadata_inputs = HPOFlagging.out.join(ch_vcfs)
+        .map { cohort, result, _vcfs, _pedigree, config, _history, _ext, _seqr, _mito ->
+            tuple(cohort, result, config)
+        }
+    def effective = [resource_paths: [
+        mane_json: processedAnnotationPath('mane.json').toAbsolutePath().toString(),
+        clinvar: file(current_clinvarbitration_all).toAbsolutePath().toString(),
+        pm5: file(current_clinvarbitration_pm5).toAbsolutePath().toString(),
+        hpo: file(params.hpo).toAbsolutePath().toString(),
+        gen2phen: file(params.gen2phen).toAbsolutePath().toString(),
+        phenio_db: file(params.phenio_db).toAbsolutePath().toString()
+    ]]
+    if (annotation_performed) {
+        effective.resource_paths += [
+            ensembl_gff: file(params.ensembl_gff).toAbsolutePath().toString(),
+            gnomad_zip: file(params.gnomad_zip).toAbsolutePath().toString(),
+            alphamissense_zip: processedAnnotationPath('alphamissense.zip').toAbsolutePath().toString()
+        ]
+    }
+    // Select the resources used by this execution.
+    ch_effective_base = ch_mito_branched.real.map { true }.toList().map { mitochondrial_cohorts ->
+        if (mitochondrial_cohorts) {
+            effective.resource_paths += [
+                ensembl_gff: file(params.ensembl_gff).toAbsolutePath().toString(),
+                mitimpact: processedAnnotationPath('mitimpact.zip').toAbsolutePath().toString(),
+                mitotip: processedAnnotationPath('mitotip.zip').toAbsolutePath().toString(),
+                napogee: processedAnnotationPath('napogee.zip').toAbsolutePath().toString()
+            ]
+        }
+        effective
+    }.first()
+    ch_effective = annotation_performed
+        ? ch_effective_base.combine(ch_fastspliceai_annotation.first()).map { actual, annotation ->
+            actual.resource_paths.fastspliceai_annotation = annotation.toAbsolutePath().toString()
+            actual
+        }
+        : ch_effective_base
+    def declarations = null
+    if (params.aargus_metadata_spec) {
+        def specification = file(params.aargus_metadata_spec, checkIfExists: true)
+        declarations = new groovy.json.JsonSlurper().parse(specification.toFile())
+    }
+    ch_prepared_specification = ch_effective.map { actual ->
+        selectedPreparedMetadata(actual, prepared_catalog, declarations)
+    }
+    WriteWorkflowMetadataSpecification(ch_prepared_specification)
+    WorkflowMetadata(ch_metadata_inputs, WriteWorkflowMetadataSpecification.out.first(),
+        file(workflow.outputDir).toAbsolutePath().toString(), ch_effective, timestamp,
+        ch_effective.map { actual ->
+            actual.resource_paths.fastspliceai_annotation ? [file(actual.resource_paths.fastspliceai_annotation)] : []
+        })
+    ch_metadata = WorkflowMetadata.out.metadata
+
     emit:
+        metadata = ch_metadata
 	json = HPOFlagging.out
 	html = CreateTalosHTML.out
 	labelled = RunHailFiltering.out

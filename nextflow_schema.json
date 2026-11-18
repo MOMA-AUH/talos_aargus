@@ -9,15 +9,15 @@
       "title": "Default parameters",
       "type": "object",
       "description": "Parameters found in `nextflow.config`.",
-      "required": [
-        "input_tsv",
-        "processed_annotations",
-        "large_files"
-      ],
+      "required": ["input_tsv", "processed_annotations", "large_files"],
       "properties": {
         "input_tsv": {
           "type": "string",
           "description": "Input runs as a TSV of `cohort`, `path`, and `type`"
+        },
+        "aargus_metadata_spec": {
+          "type": "string",
+          "description": "Optional complete JSON override for configured source identity."
         },
         "processed_annotations": {
           "type": "string",
@@ -30,6 +30,10 @@
         "ref_genome": {
           "type": "string",
           "description": "Reference genome, default is in large_files."
+        },
+        "ref_genome_assembly": {
+          "type": "string",
+          "default": "GRCh38"
         },
         "container": {
           "type": "string",
@@ -44,6 +48,10 @@
           "type": "string",
           "description": "Result file from running ParseManeIntoJson on the MANE summary file, default is in processed_annotations."
         },
+        "mane_version": {
+          "type": ["string", "null"],
+          "description": "Explicit mane resource release or snapshot identifier."
+        },
         "ensembl_gff": {
           "type": "string",
           "description": "Ensembl gene feature file, default is in large_files."
@@ -56,6 +64,10 @@
           "type": "string",
           "description": "Result files (merged bed) from the CreateRoiFromGff3 nextflow module, default is in processed_annotations."
         },
+        "ensembl_version": {
+          "type": ["string", "null"],
+          "description": "Explicit ensembl resource release or snapshot identifier."
+        },
         "alphamissense_tsv": {
           "type": "string",
           "description": "AlphaMissense raw data, default is in large_files."
@@ -63,6 +75,22 @@
         "alphamissense_zip": {
           "type": "string",
           "description": "AlphaMissense reformatted as an echtvar-compatible zip, default is in processed_annotations."
+        },
+        "alphamissense_version": {
+          "type": ["string", "null"],
+          "description": "Explicit alphamissense resource release or snapshot identifier."
+        },
+        "mitimpact_version": {
+          "type": ["string", "null"],
+          "description": "Explicit mitimpact resource release or snapshot identifier."
+        },
+        "mitotip_version": {
+          "type": ["string", "null"],
+          "description": "Explicit mitotip resource release or snapshot identifier."
+        },
+        "napogee_version": {
+          "type": ["string", "null"],
+          "description": "Explicit napogee resource release or snapshot identifier."
         },
         "submission_summary": {
           "type": "string",
@@ -74,6 +102,10 @@
           "default": "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz",
           "description": "ClinVar download URL for variant summary."
         },
+        "clinvar_version": {
+          "type": ["string", "null"],
+          "description": "ClinVar and PM5 preparation snapshot, defaulting to the current year-month (yyyy-MM)."
+        },
         "clinvar_blacklist": {
           "type": "string",
           "default": "'not' 'applicable'",
@@ -83,13 +115,25 @@
           "type": "string",
           "description": "HPO and Phenotype file, default is in large_files."
         },
+        "hpo_version": {
+          "type": ["string", "null"],
+          "description": "Explicit hpo resource release or snapshot identifier."
+        },
         "gen2phen": {
           "type": "string",
           "description": "Genes to phenotype file, default is in large_files."
         },
+        "gen2phen_version": {
+          "type": ["string", "null"],
+          "description": "Explicit gen2phen resource release or snapshot identifier."
+        },
         "phenio_db": {
           "type": "string",
           "description": "Phenio database, default is in large_files."
+        },
+        "phenio_version": {
+          "type": ["string", "null"],
+          "description": "Explicit phenio resource release or snapshot identifier."
         },
         "input_vcf_extension": {
           "type": "string",
@@ -98,16 +142,65 @@
         },
         "vcf_split_n": {
           "type": "integer",
-          "default": 1000000,
+          "default": 2500000,
           "description": "Number of lines to split VCFs by."
         },
         "gnomad_zip": {
           "type": "string",
           "description": "Echtvar-formatted annotation data for gnomAD, default is in large_files."
         },
+        "gnomad_version": {
+          "type": ["string", "null"],
+          "description": "Explicit gnomad resource release or snapshot identifier."
+        },
+        "spliceai_mode": {
+          "type": ["string", "null"],
+          "enum": [
+            "precomputed",
+            "fastspliceai",
+            "fastspliceai_cache",
+            "disabled",
+            null
+          ],
+          "default": null,
+          "description": "SpliceAI annotation mode. When null, spliceai_enabled selects precomputed or disabled."
+        },
+        "spliceai_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Compatibility fallback used when spliceai_mode is null."
+        },
+        "spliceai_vcf": {
+          "type": ["string", "null"],
+          "description": "Precomputed SpliceAI VCF, required in precomputed mode, with a .tbi or .csi index."
+        },
+        "spliceai_version": {
+          "type": ["string", "null"],
+          "description": "Explicit spliceai resource release or snapshot identifier."
+        },
+        "fastspliceai_bin": {
+          "type": ["string", "null"],
+          "description": "FastSpliceAI executable, required in fastspliceai and fastspliceai_cache modes."
+        },
+        "fastspliceai_reference": {
+          "type": ["string", "null"],
+          "description": "FastSpliceAI reference FASTA with a .fai index. Defaults to ref_genome when unset."
+        },
+        "fastspliceai_reference_version": {
+          "type": ["string", "null"],
+          "description": "Explicit fastspliceai_reference resource release or snapshot identifier."
+        },
         "fastspliceai_annotation": {
-          "type": "string",
-          "description": "Optional FastSpliceAI transcript annotation table. Defaults to the packaged GRCh38 table."
+          "type": ["string", "null"],
+          "description": "Transcript table for fastspliceai_cache mode. Defaults to the bundled MANE v1.5 table; null uses packaged GRCh38 annotations. fastspliceai mode always uses packaged GRCh38 annotations."
+        },
+        "fastspliceai_annotation_version": {
+          "type": ["string", "null"],
+          "description": "Explicit fastspliceai_annotation resource release or snapshot identifier."
+        },
+        "fastspliceai_cache": {
+          "type": ["string", "null"],
+          "description": "Mutable annotation cache path, required in fastspliceai_cache mode."
         }
       }
     }

@@ -386,6 +386,9 @@ Talos produces:
 - labelled VCF outputs
 - PanelApp cohort JSON
 - reanalysis metadata such as `first_seen` and `evidence_last_updated`
+- immutable `.metadata` source identity bundles with
+  resource releases specified in `nextflow.config` and hashed during preparation;
+  see [AARgus workflow metadata](docs/AargusMetadata.md)
 
 The preflight layer produces:
 
