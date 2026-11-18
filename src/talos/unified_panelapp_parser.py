@@ -16,7 +16,6 @@ import networkx as nx
 import pendulum
 from loguru import logger
 from mendelbrot.pedigree_parser import PedigreeParser
-from networkx import dfs_successors
 from networkx.exception import NetworkXError
 from obonet import read_obo
 
@@ -140,14 +139,14 @@ def match_hpos_to_panels(
             panel_per_hpo[phenopacket_hpo.id].add(panel_id)
 
     # cycle through all HPO terms in the cohort
-    # for each term chase it back to the HPO ontology root
+    # for each term chase it forward to the more specific (leaf-ward) HPO terms
     # if there are any hits between the HPO chain and a panel HPO, retain that connection
     for hpo_string in all_hpos:
-        # identify all HPO terms back to the ontology root
+        # identify all more-specific descendant HPO terms, towards the leaves (plus the term itself)
         try:
-            successor_hpo_terms = set(dfs_successors(hpo_graph, hpo_string))
+            descendant_hpo_terms = nx.ancestors(hpo_graph, hpo_string) | {hpo_string}
 
-            for hpo_term in successor_hpo_terms:
+            for hpo_term in descendant_hpo_terms:
                 if hpo_term in panel_per_hpo:
                     hpo_to_panels[hpo_string].update(panel_per_hpo[hpo_term])
         except (KeyError, NetworkXError):
