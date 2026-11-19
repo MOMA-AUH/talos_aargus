@@ -18,12 +18,12 @@ This README documents the parameters used in the nextflow configuration file. So
 | `napogee_zip`             | Path in `processed_annotations` to the reformatted nAPOGEE reference data                                                                                                                                                              |
 | `ensembl_gff`             | Path in `large_files` to the Ensembl GFF3 file                                                                                                                                                                                         |
 | `gnomad_zip`              | Path in `large_files` to the echtvar annotation file from [Zenodo](https://zenodo.org/records/15222100)                                                                                                                                |
-| `spliceai_mode`           | SpliceAI source: `precomputed`, `fastspliceai`, `fastspliceai_cache`, or `disabled`. Defaults to `precomputed`; `spliceai_enabled` remains a compatibility fallback when no mode is supplied.                                          |
-| `spliceai_vcf`            | Indexed VCF/BCF used by `precomputed`. The annotation workflow copies `INFO/SpliceAI` onto the Talos annotation VCF with `bcftools annotate`.                                                                                          |
-| `fastspliceai_bin`        | FastSpliceAI executable used by `fastspliceai` and `fastspliceai_cache`. Direct mode runs once on the normalized collective cohort VCF; cache mode submits only cache misses after a local cache check.                                |
-| `fastspliceai_reference`  | FASTA and `.fai` index used by FastSpliceAI. Defaults to `ref_genome`.                                                                                                                                                                 |
-| `fastspliceai_annotation` | FastSpliceAI transcript annotation table passed with `-A`. The default is the repository resource `resources/grch38_MANE_v1.5.txt`; override it with a compatible table when needed.                                                   |
-| `fastspliceai_cache`      | Genotype-free, indexed VCF cache used only by `fastspliceai_cache`. Missing normalized alleles are computed on GPU, merged atomically into the cache, and then annotated back onto the cohort VCF.                                     |
+| `fastspliceai_cache` | Cache root, default `<processed_annotations>/spliceai_cache`. Resource/scorer identities automatically select subdirectories containing `cache.vcf.gz`, its index and `cache_identity.json`. |
+| `fastspliceai_distance` | Prediction distance, default 500, allowed 0–4999. Changes automatically select a new cache namespace. |
+| `fastspliceai_mask` | Prediction mask, 0 or 1, default 0. Changes automatically select a new cache namespace. |
+| `fastspliceai_mixed_precision` | Enable `--mixed-precision`, default `false`. Does not change cache identity. |
+| `fastspliceai_device` | `cuda` (default) or `cpu`. Does not change cache identity. |
+| `fastspliceai_threads` | Scoring threads, default 6.  |
 | `mane`                    | Path in `large_files` to the MANE transcript data                                                                                                                                                                                      |
 | `ref_genome`              | Path in `large_files` to the reference genome FASTA file                                                                                                                                                                               |
 | `hpo`                     | Path in `large_files` to the HPO ontology file in `.obo` form                                                                                                                                                                          |
@@ -35,6 +35,37 @@ This README documents the parameters used in the nextflow configuration file. So
 | `submission_summary`      | FTP URL for weekly ClinVar submission dump                                                                                                                                                                                             |
 | `variant_summary`         | FTP URL for weekly ClinVar variant dump                                                                                                                                                                                                |
 | `clinvar_blacklist`       | A string, containing quoted, space-delimited entries for all ClinVar submitter sites to blacklist (ignore).                                                                                                                            |
-| `container`               | Optional container image to use when running with the `docker` profile                                                                                                                                                                 |
+| `container`               | Talos image/SIF for tasks. Run with `-with-apptainer`; Docker is disabled by default. |
 | `aargus_metadata_spec` | Optional JSON source specification used during preparation and analysis; metadata exports are mandatory. |
 | `docker.enabled`          | Whether the Docker runtime is enabled in the active Nextflow profile                                                                                                                                                                   |
+
+All processes use Slurm. Export deployment settings before starting Nextflow or
+the runner:
+
+```bash
+export SLURM_ACCOUNT=your_account
+export SLURM_GPU_PARTITIONS=gpu-l40s,gpu-h200
+```
+
+`SLURM_ACCOUNT` applies to CPU and GPU tasks and runner `sbatch` submissions.
+`SLURM_GPU_PARTITIONS` selects the partitions for `RunFastSpliceAi`, defaulting to
+`gpu-l40s,gpu-h200` when unset or empty. An unset `SLURM_ACCOUNT` uses Slurm's site
+default account. The shared account and `--gpus=1` are included automatically. Other
+resource and scoring settings are configured in Nextflow.
+
+Run the workflow with `-with-apptainer`. FastSpliceAI scoring defaults to 6 CPU
+cores, 16 GB RAM, and 8 hours. Apptainer scoring uses `--nv`. These GPU settings
+apply only to `RunFastSpliceAi`; fully cached runs skip that process.
+
+For project-specific scoring settings, use the project's Nextflow configuration:
+
+```groovy
+params.fastspliceai_threads = 8
+params.fastspliceai_mixed_precision = true
+process {
+    withName: RunFastSpliceAi {
+        memory = 24.GB
+        time = '12:00:00'
+    }
+}
+```

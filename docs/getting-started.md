@@ -109,46 +109,14 @@ nextflow \
 
 Results are written to `{workflow.outputDir}/{cohort}/outputs`. The annotation sub-workflow only needs to be run once per dataset — the resulting annotated VCF shards can be reused for every subsequent reanalysis cycle.
 
-Precomputed SpliceAI annotation is enabled by default during this main
-annotation workflow. Supply the indexed SpliceAI resource VCF:
-
-```bash
-nextflow \
-    -c nextflow.config \
-    run main.nf \
-    --input_tsv nextflow/inputs/test.tsv \
-    --spliceai_enabled true \
-    --spliceai_vcf /path/to/spliceai.vcf.gz \
-    -output-dir <path_to_output_dir>
-```
-
-This is a lookup step using `bcftools annotate`; it does not compute SpliceAI
-scores de novo. The filtering threshold remains a Talos TOML setting.
-The preflight workflow can still do legacy SpliceAI lookup if explicitly
-enabled, but it is off by default and the main annotation workflow is preferred.
-Disable main-workflow SpliceAI explicitly with `--spliceai_enabled false`.
-
-FastSpliceAI can compute scores once on the normalized collective cohort VCF
-before Talos splits it for CPU annotation:
-
-```bash
-nextflow \
-    -c nextflow.config \
-    -c runner/talos_fastspliceai.config \
-    run main.nf \
-    --input_tsv nextflow/inputs/test.tsv \
-    --spliceai_mode fastspliceai \
-    --fastspliceai_bin /path/to/fastspliceai_pip/bin/spliceai \
-    --fastspliceai_reference /path/to/ref.fa \
-    -output-dir <path_to_output_dir>
-```
-
-Use `--spliceai_mode fastspliceai_cache` with
-`--fastspliceai_cache /shared/cache.vcf.gz` to reuse prior scores. The cache is an indexed,
-genotype-free VCF. It is updated under a lock and must be versioned by the
-FastSpliceAI release, model settings, and reference build. Cache inspection
-runs locally before any GPU task is submitted. Fully cached runs therefore do
-not wait in the GPU queue; only missing alleles create a GPU task.
+FastSpliceAI annotation always uses a bcftools VCF cache. FastSpliceAI is included in the main Talos image. Configure the
+Talos container as a Docker image or an existing Apptainer SIF,
+as described in [Cached FastSpliceAI](../README.md#cached-fastspliceai).
+No mode or cache path is required; predictions are reused automatically from
+`<processed_annotations>/spliceai_cache/<identity>/cache.vcf.gz`. Resource and
+scorer changes automatically select a new cache namespace.
+Only missing alleles are submitted for GPU scoring, once across all cohorts.
+The filtering threshold remains a Talos TOML setting.
 
 For subsequent cycles after the data has already been annotated, use the Talos-only entry point:
 

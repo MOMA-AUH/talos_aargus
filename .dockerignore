@@ -9,3 +9,9 @@ large_files*
 nextflow/*_outputs
 nextflow/*test
 work
+
+# Keep local environments and repository history out of the build context.
+.git
+.venv
+venv
+**/__pycache__

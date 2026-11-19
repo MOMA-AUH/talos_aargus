@@ -20,6 +20,7 @@ classifiers=[
 ]
 
 dependencies=[
+    'spliceai @ https://github.com/MOMA-AUH/FastSpliceAI/archive/ca5444366c53a3695a0711ebac3b5e526aa8235b.tar.gz',
     'hail~=0.2.137',
     'clinvarbitration~=2.2.7',
     'cloudpathlib[all]>=0.16.0',
@@ -66,6 +67,9 @@ Repository = "https://github.com/populationgenomics/talos"
 
 [project.scripts]
 run_workflow = 'talos.cpg_internal_scripts.run_workflow:cli_main'
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/talos"]

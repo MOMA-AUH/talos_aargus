@@ -1,4 +1,4 @@
-process AnnotateWithSpliceAi {
+process AnnotateWithFastSpliceAi {
     memory 4.GB
     cpus 1
 

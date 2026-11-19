@@ -9,8 +9,8 @@ This repository is an Aarhus University Hospital extension of the Talos workflow
 It keeps the Talos v11 TSV-driven analysis model, but adds an AUH-oriented runtime
 and preflight layer:
 
-- native-first execution without requiring Docker
-- optional Apptainer packaging
+- Docker execution with FastSpliceAI included in the Talos image
+- Apptainer support for cluster deployments
 - standalone `preflight/` workflow for singleton, duo, and trio VCF preparation
 - In-house resource wiring for common variants, variant artefacts, and splicing variants
 
@@ -60,6 +60,7 @@ Requirements:
 
 - [Nextflow](https://www.nextflow.io/docs/latest/install.html)
 - Java
+- Docker or Apptainer for main-workflow tasks
 - Python 3.10 or 3.11
 - `bcftools`, `tabix`, `bgzip`, `samtools`, `wget`
 
@@ -109,76 +110,109 @@ bash build_apptainer_frontend.sh
 bash run_nextflow_example_apptainer.sh
 ```
 
-### SpliceAI Modes
+### Cached FastSpliceAI
 
-The main workflow supports four explicit SpliceAI modes:
+The annotation workflow always runs FastSpliceAI through the bcftools VCF
+cache. There are no precomputed, uncached, or disabled SpliceAI modes.
+The default cache root is `<processed_annotations>/spliceai_cache`; no mode
+or cache path needs to be supplied. `fastspliceai_cache` optionally overrides
+this **directory**, not a VCF filename.
 
-- `precomputed` (default): copy `INFO/SpliceAI` from an indexed resource VCF
-- `fastspliceai`: compute scores once on the normalized collective cohort VCF
-- `fastspliceai_cache`: compute only normalized alleles absent from a shared cache
-- `disabled`: do not add SpliceAI annotation
+All input splits from all cohorts are normalized first, including existing
+`shards` inputs and whole VCFs split by the workflow. FastSpliceAI first gathers
+the splits within each cohort into one indexed, site-only VCF, then combines
+those cohort VCFs into the distinct global allele set. Both gathers stream
+through bcftools, avoiding temporary site-only files for every split.
+The global sites are intersected with the existing cache. Only cache misses
+reach one FastSpliceAI scoring task. The predictions
+are then applied back to each cohort's splits without combining samples or
+changing genotypes. Fully cached runs do not submit a scoring job.
 
-Precomputed lookup remains the standard native run:
+The existing per-split `SplitVcf`, `NormaliseAndRegionFilterVcf`,
+`AnnotateWithEchtvar`, and `AnnotateCsqWithBcftools` processes are unchanged.
+FastSpliceAI gathers a side branch from the normalized splits while the ordinary
+annotation path continues. Its completed cache is applied to each split after
+the existing Echtvar and CSQ steps.
+
+The `FASTSPLICEAI` subworkflow in `nextflow/fastspliceai.nf` gathers splits per
+cohort, gathers cohorts, finds cache misses, scores missing sites, extends the
+cache, and applies it to the annotated splits. It receives the normalized VCFs,
+the per-split annotated VCFs, and the reference channel from `ANNOTATION`.
+Its processes live in `nextflow/modules/fastspliceai/<Process>/main.nf`, following
+the same layout as the Talos process modules. The published cache is
+`<processed_annotations>/spliceai_cache/<identity>/cache.vcf.gz` with a `.tbi` index.
+New annotations are combined with all existing cached annotations, including
+alleles absent from the current cohorts, and replace the published cache.
+One Talos pipeline runs at a time; no locking is used.
+
+Only sites with complete SpliceAI predictions enter the cache; numeric zero
+scores remain valid predictions. Each namespace is keyed by the GFF, generated
+annotation, reference FASTA/index, scorer source and model weights, runtime
+versions, prediction distance, and masking. Device and mixed precision do not
+change the identity. Changed resources select a new namespace;
+legacy cache files directly under the cache root are not reused. Each namespace
+also contains `cache_identity.json` explaining its identity. Resources are hashed
+once per run, including on resume, to detect changes inside a mutable image.
+
+### Talos image with FastSpliceAI
+
+FastSpliceAI is declared as the `spliceai` dependency in `pyproject.toml`,
+using the fork at revision `ca5444366c53a3695a0711ebac3b5e526aa8235b`.
+The same `uv.lock` and `uv sync` install Talos, FastSpliceAI, PyTorch, and CUDA
+libraries into `/talos/.venv`. No separate scoring image or installation step
+is required. The bundled default SpliceAI weights are used directly.
+
+After changing dependencies, regenerate the lockfile before building:
 
 ```bash
-nextflow -c nextflow.config run main.nf \
+uv lock
+docker build -t talos:11.1.0 .
+docker run --rm talos:11.1.0 spliceai --help
+```
+
+The Dockerfile uses `uv sync --locked` to require a matching lockfile, and
+checks the installed FastSpliceAI CLI. uv HTTP requests have a 300-second
+timeout; increase it with `--build-arg UV_HTTP_TIMEOUT=600` if needed.
+
+Scoring uses the main `container` image. For Apptainer, convert
+the Talos image to a SIF and select it in your deployment configuration:
+
+```bash
+apptainer build talos.sif docker-daemon://talos:11.1.0
+```
+
+```groovy
+// cached-spliceai.config
+params.container = '/absolute/path/talos.sif'
+```
+
+```bash
+nextflow -c nextflow.config \
+  -c cached-spliceai.config run main.nf -with-apptainer \
   --input_tsv /path/to/talos_input.tsv \
-  --processed_annotations processed_annotations \
-  --spliceai_mode precomputed \
-  --spliceai_vcf /path/to/spliceai_scores.vcf.gz \
+  --processed_annotations /path/to/processed_annotations \
   -output-dir /path/to/talos_outputs
 ```
 
-Direct `fastspliceai` mode is submitted as one GPU process on the normalized
-collective VCF, before it is split for the ordinary CPU annotation tasks. Add
-the GPU process configuration and provide the executable and reference:
+The scoring process enables GPU passthrough (`--gpus all` for Docker, `--nv`
+for Apptainer). The Slurm configuration allocates GPU resources only for
+scoring. Reference FASTA/index, transcript tables, and the cache must be
+accessible on compute nodes and inside containers. Scoring runs `spliceai` from
+the Talos image PATH and always uses `ref_genome`. `GenerateFastSpliceAiAnnotation` builds the transcript table from the same
+`params.ensembl_gff` channel used by consequence annotation. It retains each
+exon-bearing Ensembl transcript separately, including non-MANE and noncoding
+models on contigs present in the reference. MANE remains the source of transcript
+labels and prioritization elsewhere in Talos; it does not supply exon geometry.
+No separate transcript-table parameter or annotation download is required.
 
-FastSpliceAI is deliberately kept as a separate Git checkout from
-[`MOMA-AUH/FastSpliceAI`](https://github.com/MOMA-AUH/FastSpliceAI), with its
-own shared environment. It is not vendored into `talos_aargus` and is not part
-of this repository's Git history. The workflow only calls the configured
-`fastspliceai_bin` executable.
+Rows retain zero-based starts, exclusive ends, and paired exon boundaries, sorted
+in reference contig order and genomic coordinates. Chromosome aliases, including
+M/MT/chrM, are resolved to reference names. Generated table bytes are hashed during
+analysis and recorded in cohort metadata. Rebuild the Talos container after
+updating the generator or cache identity code.
 
-```bash
-nextflow \
-  -c nextflow.config \
-  -c runner/talos_fastspliceai.config \
-  run main.nf \
-  --input_tsv /path/to/talos_input.tsv \
-  --processed_annotations processed_annotations \
-  --spliceai_mode fastspliceai \
-  --fastspliceai_bin /path/to/fastspliceai_pip/bin/spliceai \
-  --fastspliceai_reference large_files/ref.fa \
-  -output-dir /path/to/talos_outputs
-```
-
-For repeated cohorts, use a shared genotype-free VCF cache. It records every
-evaluated normalized allele, including alleles without a useful score. Cache
-misses are scored, merged under a file lock, and `INFO/SpliceAI` is then copied
-onto the full cohort VCF without changing genotypes:
-
-```bash
-nextflow \
-  -c nextflow.config \
-  -c runner/talos_fastspliceai.config \
-  run main.nf \
-  --input_tsv /path/to/talos_input.tsv \
-  --processed_annotations processed_annotations \
-  --spliceai_mode fastspliceai_cache \
-  --fastspliceai_bin /path/to/fastspliceai_pip/bin/spliceai \
-  --fastspliceai_reference large_files/ref.fa \
-  --fastspliceai_cache /shared/fastspliceai_cache.vcf.gz \
-  -output-dir /path/to/talos_outputs
-```
-
-Keep separate cache paths for each FastSpliceAI release, model configuration,
-and reference build. Full parameter details are in
+Full parameter details are in
 [`docs/NextflowConfiguration.md`](docs/NextflowConfiguration.md).
-
-In `fastspliceai_cache` mode, cache inspection runs as a local CPU process
-first. A fully cached rerun does not submit a GPU job. If new normalized
-alleles are found, only those alleles are submitted to the GPU process; the
-successful results are merged into the shared cache under a file lock.
 
 ### Web Runner
 

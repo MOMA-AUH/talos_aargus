@@ -8,7 +8,7 @@ process ResummariseRawSubmissions {
         val timestamp
 
     output:
-        tuple path("clinvarbitration_${timestamp}.vcf.bgz"), path("clinvarbitration_${timestamp}.vcf.bgz.tbi"), emit: "vcf"
+        tuple path("clinvarbitration_${timestamp}.vcf.bgz"), path("clinvarbitration_${timestamp}.vcf.bgz.tbi"), emit: vcf
 
     // Generates
     // clinvarbitration_XX.vcf.bgz + index - VCF containing pathogenic small-variant entries, feeds into annotation

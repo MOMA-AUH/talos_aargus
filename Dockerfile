@@ -1,15 +1,27 @@
-FROM python:3.11-slim-bullseye AS base
+# syntax=docker/dockerfile:1
+
+ARG PYTHON_BASE_TAG=3.11-slim-trixie
+FROM python:${PYTHON_BASE_TAG} AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Retain Java 11 for the locked Hail/Spark versions without Bullseye repositories.
+ENV JAVA_HOME=/opt/java/openjdk
+COPY --from=eclipse-temurin:11-jre-noble /opt/java/openjdk /opt/java/openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Use HTTPS and tolerate transient mirror timeouts in both installation stages.
+RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) \
+        -exec sed -i \
+            -e 's|http://deb\.debian\.org|https://deb.debian.org|g' {} + && \
+    printf 'Acquire::Retries "5";\nAcquire::https::Timeout "120";\n' > /etc/apt/apt.conf.d/80-network-retries && \
+    apt-get update && apt-get install -y --no-install-recommends \
         bzip2 \
         ca-certificates \
         gnupg \
         libbz2-1.0 \
         libcurl4 \
         liblzma5 \
-        openjdk-11-jdk-headless \
         procps \
         wget \
         zip \
@@ -66,15 +78,23 @@ WORKDIR /talos
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --all-extras --frozen --no-install-project --no-dev
+    uv sync --all-extras --locked --no-install-project --no-dev
 
 # Add in the additional requirements that are most likely to change.
 COPY LICENSE pyproject.toml uv.lock README.md ./
 COPY src src/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --all-extras --frozen --no-dev
+    uv sync --all-extras --locked --no-dev
 
 # Place executables in the environment at the front of the path
 ENV PATH="/talos/.venv/bin:$PATH"
+
+# Check the installed Talos/FastSpliceAI environment and native tools together.
+RUN python -c "import talos, cyvcf2, hail" && \
+    java -version && \
+    bcftools --version && \
+    tabix --version && \
+    echtvar --version && \
+    spliceai --help >/dev/null
 
 COPY echtvar echtvar/
