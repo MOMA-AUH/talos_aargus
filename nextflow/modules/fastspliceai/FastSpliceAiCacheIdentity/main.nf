@@ -10,14 +10,11 @@ process FastSpliceAiCacheIdentity {
         path reference_fai
         val distance
         val mask
-        val device
-        val mixed_precision
 
     output:
         path 'identity.json'
 
     script:
-        def precision = mixed_precision ? '--mixed-precision' : ''
         """
         set -euo pipefail
         python -m talos.fastspliceai_identity \\
@@ -27,7 +24,6 @@ process FastSpliceAiCacheIdentity {
             --reference-fai ${shellQuote(reference_fai)} \\
             --distance ${shellQuote(distance)} \\
             --mask ${shellQuote(mask)} \\
-            --device ${shellQuote(device)} \\
-            --output identity.json ${precision}
+            --output identity.json
         """
 }
