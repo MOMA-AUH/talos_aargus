@@ -21,11 +21,13 @@ workflow FASTSPLICEAI {
     main:
     def cache = file(params.fastspliceai_cache).toFile().canonicalPath
     log.info "FastSpliceAI cache: ${cache}"
-    ch_scoring_reference = ch_ref_genome.map { reference -> reference.toRealPath() }.first()
+    ch_scoring_reference = ch_ref_genome.first()
     ch_fai = ch_scoring_reference.map { reference -> file("${reference}.fai", checkIfExists: true) }
-    GenerateFastSpliceAiAnnotation(ch_gff, ch_fai)
-    ch_annotation = GenerateFastSpliceAiAnnotation.out.first()
-    FastSpliceAiCacheIdentity(ch_gff, ch_annotation, ch_scoring_reference, ch_fai,
+    ch_mane_summary = channel.fromPath(params.mane, checkIfExists: true).first()
+    GenerateFastSpliceAiAnnotation(ch_gff, ch_fai, ch_mane_summary)
+    ch_annotation = GenerateFastSpliceAiAnnotation.out.annotation.first()
+    ch_selection = GenerateFastSpliceAiAnnotation.out.selection.first()
+    FastSpliceAiCacheIdentity(ch_gff, ch_annotation, ch_scoring_reference, ch_fai, ch_selection,
         params.fastspliceai_distance, params.fastspliceai_mask)
     ch_cache = FastSpliceAiCacheIdentity.out.map { identity ->
         def record = new groovy.json.JsonSlurper().parse(identity.toFile())
@@ -53,7 +55,7 @@ workflow FASTSPLICEAI {
     ch_cached = ch_checked.hits.map { old_cache, old_index, misses, misses_index, count ->
         tuple(old_cache, old_index, misses, misses_index)
     }
-    CompleteFastSpliceAi(RunFastSpliceAi.out.mix(ch_cached), ch_cache, FastSpliceAiCacheIdentity.out.first())
+    CompleteFastSpliceAi(RunFastSpliceAi.out.mix(ch_cached), ch_cache, FastSpliceAiCacheIdentity.out.first(), ch_selection)
 
     // Apply the completed cache to each original per-split annotated VCF.
     ch_completed_cache = CompleteFastSpliceAi.out.cache.first()
@@ -66,4 +68,5 @@ workflow FASTSPLICEAI {
     emit:
         vcfs = AnnotateWithFastSpliceAi.out
         annotation = ch_annotation
+        selection = ch_selection
 }

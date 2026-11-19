@@ -153,6 +153,9 @@ change the identity. Changed resources select a new namespace;
 legacy cache files directly under the cache root are not reused. Each namespace
 also contains `cache_identity.json` explaining its identity. Resources are hashed
 once per run, including on resume, to detect changes inside a mutable image.
+The transcript selection policy, MANE summary hash, and selected models are
+recorded in `transcript_selection.json` beside the cache. This report is part of
+the cache identity, so changes to MANE or the selection policy select a new namespace.
 
 ### Talos image with FastSpliceAI
 
@@ -198,12 +201,32 @@ The scoring process enables GPU passthrough (`--gpus all` for Docker, `--nv`
 for Apptainer). The Slurm configuration allocates GPU resources only for
 scoring. Reference FASTA/index, transcript tables, and the cache must be
 accessible on compute nodes and inside containers. Scoring runs `spliceai` from
-the Talos image PATH and always uses `ref_genome`. `GenerateFastSpliceAiAnnotation` builds the transcript table from the same
-`params.ensembl_gff` channel used by consequence annotation. It retains each
-exon-bearing Ensembl transcript separately, including non-MANE and noncoding
-models on contigs present in the reference. MANE remains the source of transcript
-labels and prioritization elsewhere in Talos; it does not supply exon geometry.
-No separate transcript-table parameter or annotation download is required.
+the Talos image PATH and always uses `ref_genome`. `GenerateFastSpliceAiAnnotation`
+builds exon models from the same `params.ensembl_gff` channel used by consequence
+annotation. It selects MANE Select and MANE Plus Clinical transcripts using the
+existing `params.mane` summary. MANE is matched by stable Ensembl gene/transcript
+IDs, with transcript version, chromosome, strand, and outer-bound checks against
+the GFF and reference. Gene symbols come from Ensembl gene records; aliases and
+renames in the MANE summary do not affect matching. The original summary is
+required during analysis because the prepared `mane.json` omits versions and loci.
+
+Each gene/reference-chromosome/strand group without a usable MANE Select model
+receives one fallback model, while usable MANE Plus Clinical models are retained.
+Fallback order is the gene's `canonical_transcript` declaration, a transcript
+tagged `Ensembl_canonical`, then APPRIS rank and longest CDS. APPRIS principal
+ranks 1–5 precede alternative ranks 1–2. CDS length sums coding intervals rather
+than including introns. Without a canonical or coding model, the longest exonic
+transcript is used. Remaining ties use longest exonic length then transcript ID.
+Stable gene IDs distinguish genes sharing a symbol; a symbol is used only to
+group parentless GFF models that provide no gene ID. Identical selected exon
+models are emitted once per gene/locus. Different MANE clinical models may
+intentionally produce multiple rows with the same gene symbol.
+
+`transcript_selection.json` lists the selected versioned transcript IDs, their
+gene IDs and symbols, their annotation row numbers, selection sources, and MANE
+models that could not be used, including patch-contig or version mismatches.
+This policy uses intact Ensembl transcript models; it does not merge splice sites
+across isoforms or reproduce the original SpliceAI GENCODE V24 selection policy.
 
 Rows retain zero-based starts, exclusive ends, and paired exon boundaries, sorted
 in reference contig order and genomic coordinates. Chromosome aliases, including

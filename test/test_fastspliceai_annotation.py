@@ -1,10 +1,16 @@
-"""FastSpliceAI models use every Ensembl transcript present in the reference."""
+"""Ensembl exon validation and reference mapping apply before transcript selection."""
 
 import gzip
 
 import pytest
 
 from talos.annotation_scripts.generate_fastspliceai_annotation import generate_annotation
+
+
+def _without_mane(gff, fai, output) -> None:
+    summary = output.parent / 'mane.tsv'
+    summary.write_text('Ensembl_Gene\tEnsembl_nuc\tMANE_status\tGRCh38_chr\tchr_start\tchr_end\tchr_strand\n')
+    generate_annotation(gff, fai, output, mane_summary=summary)
 
 
 def annotation_inputs(tmp_path):
@@ -33,12 +39,11 @@ def annotation_inputs(tmp_path):
     return gff, fai, tmp_path / 'annotation.tsv'
 
 
-def test_all_isoforms_noncoding_and_mt_use_reference_order_and_paired_exons(tmp_path):
+def test_fallback_models_noncoding_and_mt_use_reference_order_and_paired_exons(tmp_path):
     gff, fai, output = annotation_inputs(tmp_path)
-    generate_annotation(gff, fai, output)
+    _without_mane(gff, fai, output)
     assert output.read_text().splitlines() == [
         '#NAME\tCHROM\tSTRAND\tTX_START\tTX_END\tEXON_START\tEXON_END',
-        'TWO\tchr2\t+\t10\t20\t10,\t20,',
         'TWO\tchr2\t+\t100\t200\t100,180,\t120,200,',
         'TEN\tchr10\t-\t10\t30\t10,20,\t15,30,',
         'ENSG25\tchrM\t+\t4\t10\t4,\t10,',
@@ -64,7 +69,7 @@ def test_invalid_models_fail_without_output(tmp_path, old, new, message):
     with gzip.open(gff, 'wt') as stream:
         stream.write(content.replace(old, new))
     with pytest.raises(ValueError, match=message):
-        generate_annotation(gff, fai, output)
+        _without_mane(gff, fai, output)
     assert not output.exists()
 
 
@@ -74,7 +79,7 @@ def test_transcript_without_exons_is_not_invented(tmp_path):
         content = stream.read()
     with gzip.open(gff, 'wt') as stream:
         stream.write(content + '2\tEnsembl\ttranscript\t201\t250\t.\t+\t.\tID=transcript:ENST5;gene_name=EMPTY\n')
-    generate_annotation(gff, fai, output)
+    _without_mane(gff, fai, output)
     assert 'EMPTY' not in output.read_text()
 
 
@@ -88,8 +93,8 @@ def test_plain_gff_with_gene_name_and_multi_parent_exons(tmp_path):
     fai = tmp_path / 'ref.fai'
     fai.write_text('1\t100\t0\t100\t101\n')
     output = tmp_path / 'annotation.tsv'
-    generate_annotation(gff, fai, output)
-    assert output.read_text().splitlines()[1:] == ['SN+RNA\t1\t+\t0\t20\t0,\t20,'] * 2
+    _without_mane(gff, fai, output)
+    assert output.read_text().splitlines()[1:] == ['SN+RNA\t1\t+\t0\t20\t0,\t20,']
 
 
 def test_exon_version_attribute_does_not_version_its_parent(tmp_path):
@@ -98,7 +103,7 @@ def test_exon_version_attribute_does_not_version_its_parent(tmp_path):
         content = stream.read()
     with gzip.open(gff, 'wt') as stream:
         stream.write(content.replace('Parent=transcript:ENST10', 'Parent=transcript:ENST10;version=99'))
-    generate_annotation(gff, fai, output)
+    _without_mane(gff, fai, output)
     assert 'TEN\tchr10' in output.read_text()
 
 
@@ -113,7 +118,7 @@ def test_unversioned_transcript_cannot_merge_different_parent_versions(tmp_path)
     fai.write_text('1\t100\t0\t100\t101\n')
     output = tmp_path / 'annotation.tsv'
     with pytest.raises(ValueError, match='version'):
-        generate_annotation(gff, fai, output)
+        _without_mane(gff, fai, output)
     assert not output.exists()
 
 
@@ -127,5 +132,5 @@ def test_single_parent_version_is_accepted_for_unversioned_transcript(tmp_path):
     fai = tmp_path / 'ref.fai'
     fai.write_text('1\t100\t0\t100\t101\n')
     output = tmp_path / 'annotation.tsv'
-    generate_annotation(gff, fai, output)
+    _without_mane(gff, fai, output)
     assert output.read_text().splitlines()[1] == 'GENE\t1\t+\t0\t20\t0,10,\t5,20,'

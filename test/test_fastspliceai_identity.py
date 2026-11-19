@@ -12,7 +12,7 @@ from talos import fastspliceai_identity as module
 @pytest.fixture
 def identity_inputs(tmp_path):
     paths = {}
-    for name in ('gff', 'annotation', 'reference', 'reference_fai'):
+    for name in ('gff', 'annotation', 'reference', 'reference_fai', 'selection'):
         paths[name] = tmp_path / name
         paths[name].write_text(name)
     return paths
@@ -35,7 +35,7 @@ def test_same_content_and_settings_have_stable_key(identity_inputs, tmp_path):
     assert identity(moved)['key'] == first['key']
 
 
-@pytest.mark.parametrize('name', ['gff', 'annotation', 'reference', 'reference_fai'])
+@pytest.mark.parametrize('name', ['gff', 'annotation', 'reference', 'reference_fai', 'selection'])
 def test_resource_content_changes_invalidate_cache(identity_inputs, name):
     first = identity(identity_inputs)
     identity_inputs[name].write_text('changed bytes')
@@ -98,3 +98,16 @@ def test_unidentified_model_weights_are_rejected(monkeypatch):
     monkeypatch.setattr(module, 'distribution', lambda _name: SimpleNamespace(version='2', files=[]))
     with pytest.raises(ValueError, match='weights'):
         module.scorer_identity()
+
+
+def test_cli_identity_includes_selection_provenance(identity_inputs, tmp_path, monkeypatch):
+    scorer = {'version': 'stub', 'weights': 'abc'}
+    monkeypatch.setattr(module, 'scorer_identity', lambda: scorer)
+    output = tmp_path / 'identity.json'
+    arguments = ['fastspliceai_identity']
+    for name, path in identity_inputs.items():
+        arguments.extend(['--' + name.replace('_', '-'), str(path)])
+    arguments.extend(['--distance', '500', '--mask', '0', '--output', str(output)])
+    monkeypatch.setattr('sys.argv', arguments)
+    module.main()
+    assert json.loads(output.read_text()) == identity(identity_inputs)

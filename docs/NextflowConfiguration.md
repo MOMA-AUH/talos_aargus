@@ -18,7 +18,7 @@ This README documents the parameters used in the nextflow configuration file. So
 | `napogee_zip`             | Path in `processed_annotations` to the reformatted nAPOGEE reference data                                                                                                                                                              |
 | `ensembl_gff`             | Path in `large_files` to the Ensembl GFF3 file                                                                                                                                                                                         |
 | `gnomad_zip`              | Path in `large_files` to the echtvar annotation file from [Zenodo](https://zenodo.org/records/15222100)                                                                                                                                |
-| `fastspliceai_cache` | Cache root, default `<processed_annotations>/spliceai_cache`. Resource/scorer identities automatically select subdirectories containing `cache.vcf.gz`, its index and `cache_identity.json`. |
+| `fastspliceai_cache` | Cache root, default `<processed_annotations>/spliceai_cache`. Resource/scorer/selection identities automatically select subdirectories containing `cache.vcf.gz`, its index, `cache_identity.json` and `transcript_selection.json`. |
 | `fastspliceai_distance` | Prediction distance, default 500, allowed 0–4999. Changes automatically select a new cache namespace. |
 | `fastspliceai_mask` | Prediction mask, 0 or 1, default 0. Changes automatically select a new cache namespace. |
 | `fastspliceai_mixed_precision` | Enable `--mixed-precision`, default `false`. Does not change cache identity. |
@@ -38,6 +38,12 @@ This README documents the parameters used in the nextflow configuration file. So
 | `container`               | Talos image/SIF for tasks. Run with `-with-apptainer`; Docker is disabled by default. |
 | `aargus_metadata_spec` | Optional JSON source specification used during preparation and analysis; metadata exports are mandatory. |
 | `docker.enabled`          | Whether the Docker runtime is enabled in the active Nextflow profile                                                                                                                                                                   |
+
+FastSpliceAI analysis also requires the original `mane` summary TSV (plain or
+gzipped). It selects compatible MANE Select and Plus Clinical Ensembl models;
+genes without a usable Select model receive an Ensembl fallback. The prepared
+`mane_json` remains in use for downstream annotation. Selection provenance and
+unusable MANE models are recorded in `transcript_selection.json` in the cache.
 
 All processes use Slurm. Export deployment settings before starting Nextflow or
 the runner:

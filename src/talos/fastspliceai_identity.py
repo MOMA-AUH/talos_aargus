@@ -8,7 +8,7 @@ import json
 from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
 
-PROFILE = 'talos/fastspliceai-cache/1'
+PROFILE = 'talos/fastspliceai-cache/2'
 WEIGHT_SUFFIXES = {'.h5', '.hdf5', '.pt', '.pth', '.ckpt', '.safetensors', '.onnx'}
 SCORING_DEPENDENCIES = ('torch', 'numpy', 'pysam', 'pyfaidx', 'h5py')
 
@@ -68,6 +68,7 @@ def create_identity(
     annotation: Path,
     reference: Path,
     reference_fai: Path,
+    selection: Path,
     *,
     distance: int,
     mask: int,
@@ -78,7 +79,13 @@ def create_identity(
         raise ValueError('FastSpliceAI distance must be an integer between 0 and 4999')
     if type(mask) is not int or mask not in {0, 1}:
         raise ValueError('FastSpliceAI mask must be 0 or 1')
-    paths = {'gff': gff, 'annotation': annotation, 'reference': reference, 'reference_fai': reference_fai}
+    paths = {
+        'gff': gff,
+        'annotation': annotation,
+        'reference': reference,
+        'reference_fai': reference_fai,
+        'selection': selection,
+    }
     stamps = {name: _fingerprint(path) for name, path in paths.items()}
     resources = {name: _hash_file(path) for name, path in paths.items()}
     payload = {
@@ -95,7 +102,7 @@ def create_identity(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ('gff', 'annotation', 'reference', 'reference-fai', 'output'):
+    for name in ('gff', 'annotation', 'reference', 'reference-fai', 'selection', 'output'):
         parser.add_argument(f'--{name}', type=Path, required=True)
     parser.add_argument('--distance', type=int, required=True)
     parser.add_argument('--mask', type=int, required=True)
@@ -105,6 +112,7 @@ def main() -> None:
         args.annotation,
         args.reference,
         args.reference_fai,
+        args.selection,
         distance=args.distance,
         mask=args.mask,
     )

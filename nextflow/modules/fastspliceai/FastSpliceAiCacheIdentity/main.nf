@@ -8,6 +8,7 @@ process FastSpliceAiCacheIdentity {
         path annotation
         path reference
         path reference_fai
+        path selection
         val distance
         val mask
 
@@ -22,6 +23,7 @@ process FastSpliceAiCacheIdentity {
             --annotation ${shellQuote(annotation)} \\
             --reference ${shellQuote(reference)} \\
             --reference-fai ${shellQuote(reference_fai)} \\
+            --selection ${shellQuote(selection)} \\
             --distance ${shellQuote(distance)} \\
             --mask ${shellQuote(mask)} \\
             --output identity.json
