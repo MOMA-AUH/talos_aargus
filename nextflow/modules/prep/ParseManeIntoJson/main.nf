@@ -9,7 +9,6 @@ process ParseManeIntoJson {
     script:
         """
         set -euo pipefail
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
 
         python -m talos.annotation_scripts.parse_mane_into_json \
             --input ${mane_summary} \

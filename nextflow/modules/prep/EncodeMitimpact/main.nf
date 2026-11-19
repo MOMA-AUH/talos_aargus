@@ -9,7 +9,6 @@ process EncodeMitimpact {
     script:
         """
         set -euo pipefail
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
 
         python -m talos.annotation_scripts.parse_mitimpact \
             --input ${tsv} \

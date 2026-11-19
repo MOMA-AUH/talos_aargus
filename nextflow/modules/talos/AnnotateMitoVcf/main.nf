@@ -38,7 +38,6 @@ process AnnotateMitoVcf {
             "${cohort}_mito_csq_annotated.vcf.bgz" \
             "${cohort}_mito_all_annotated.vcf.bgz"
 
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
         export TALOS_CONFIG=${talos_config}
 
         python -m talos.reformat_and_label_mito_vcf \\

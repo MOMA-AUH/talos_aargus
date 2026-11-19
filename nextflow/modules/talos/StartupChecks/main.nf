@@ -13,7 +13,6 @@ process StartupChecks {
         """
         set -euo pipefail
 
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
         export TALOS_CONFIG=${talos_config}
 
         python -m talos.startup_checks \\

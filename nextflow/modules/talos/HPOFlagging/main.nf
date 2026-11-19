@@ -14,7 +14,6 @@ process HPOFlagging {
         """
         set -euo pipefail
 
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
         export TALOS_CONFIG=${talos_config}
         python -m talos.hpo_flagging \
              --input ${talos_result_json} \

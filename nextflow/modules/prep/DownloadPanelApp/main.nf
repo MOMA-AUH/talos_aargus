@@ -11,7 +11,6 @@ process DownloadPanelApp {
     script:
         """
         set -euo pipefail
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
         export http_proxy=http://proxy-default:3128
         export https_proxy=http://proxy-default:3128
         export HTTPS_CA_FILE=/etc/ssl/certs/ca-bundle.crt

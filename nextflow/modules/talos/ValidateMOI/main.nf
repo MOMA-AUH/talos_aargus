@@ -15,7 +15,6 @@ process ValidateMOI {
         """
         set -euo pipefail
 
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
         export TALOS_CONFIG=${talos_config}
 
         ${mito_idx}

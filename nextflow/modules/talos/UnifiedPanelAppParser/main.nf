@@ -12,7 +12,6 @@ process UnifiedPanelAppParser {
         """
         set -euo pipefail
 
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
         export TALOS_CONFIG=${talos_config}
         python -m talos.unified_panelapp_parser \
             --input $panelapp_cache \

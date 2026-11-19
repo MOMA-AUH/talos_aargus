@@ -18,7 +18,6 @@ process CreateRoiFromGff3 {
     script:
         """
         set -euo pipefail
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
 
         python -m talos.annotation_scripts.create_roi_from_gff3 \
             --gff3 ${gff} \

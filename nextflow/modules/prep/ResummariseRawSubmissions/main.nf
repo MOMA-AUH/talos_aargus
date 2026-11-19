@@ -15,7 +15,6 @@ process ResummariseRawSubmissions {
     script:
         """
         set -euo pipefail
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
 
         python3 -m talos.resummarise_clinvar \
             -v "${variant_summary}" \

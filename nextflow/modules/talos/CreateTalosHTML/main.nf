@@ -15,7 +15,6 @@ process CreateTalosHTML {
         """
         set -euo pipefail
 
-        export PYTHONPATH="${projectDir}/src:\$PYTHONPATH"
         export TALOS_CONFIG=${talos_config}
         python -m talos.create_talos_html \
             --input ${talos_result_json} \
