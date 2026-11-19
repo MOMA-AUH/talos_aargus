@@ -40,10 +40,13 @@ This README documents the parameters used in the nextflow configuration file. So
 | `docker.enabled`          | Whether the Docker runtime is enabled in the active Nextflow profile                                                                                                                                                                   |
 
 FastSpliceAI analysis also requires the original `mane` summary TSV (plain or
-gzipped). It selects compatible MANE Select and Plus Clinical Ensembl models;
+gzipped). It selects compatible MANE Select Ensembl models;
 genes without a usable Select model receive an Ensembl fallback. The prepared
 `mane_json` remains in use for downstream annotation. Selection provenance and
 unusable MANE models are recorded in `transcript_selection.json` in the cache.
+Exactly one row is retained per gene ID and gene symbol across reference loci.
+Plus Clinical records are ignored, and discarded representatives for shared
+symbols are recorded in the selection report.
 
 All processes use Slurm. Export deployment settings before starting Nextflow or
 the runner:

@@ -2,6 +2,7 @@
 
 import csv
 import json
+from pathlib import Path
 
 import pytest
 
@@ -49,7 +50,7 @@ def mane_row(model, status='MANE Select', **changes: object):
     } | changes
 
 
-def run_annotation(tmp_path, models, mane=(), *, canonical=None, reverse=False):
+def _write_gff(path: Path, models, *, canonical=None, reverse=False) -> None:
     records = []
     for model in models:
         chrom, strand = model['chrom'], model['strand']
@@ -70,24 +71,36 @@ def run_annotation(tmp_path, models, mane=(), *, canonical=None, reverse=False):
                 f'\tParent=transcript:{model["identifier"]}'
                 for start, end in intervals
             )
-    gff = tmp_path / 'genes.gff'
-    gff.write_text('\n'.join(reversed(records) if reverse else records) + '\n')
-    fai = tmp_path / 'ref.fa.fai'
-    fai.write_text('chr1\t1000\t0\t1000\t1001\nchr2\t1000\t0\t1000\t1001\n')
-    summary = tmp_path / 'mane.tsv'
-    with summary.open('w') as stream:
+    path.write_text('\n'.join(reversed(records) if reverse else records) + '\n')
+
+
+def _write_mane_summary(path: Path, mane) -> None:
+    with path.open('w') as stream:
         writer = csv.DictWriter(stream, MANE_COLUMNS, delimiter='\t')
         writer.writeheader()
         writer.writerows(mane)
+
+
+def run_annotation(tmp_path, models, mane=(), *, canonical=None, reverse=False):
+    gff = tmp_path / 'genes.gff'
+    _write_gff(gff, models, canonical=canonical, reverse=reverse)
+    fai = tmp_path / 'ref.fa.fai'
+    fai.write_text('chr1\t1000\t0\t1000\t1001\nchr2\t1000\t0\t1000\t1001\n')
+    summary = tmp_path / 'mane.tsv'
+    _write_mane_summary(summary, mane)
     output = tmp_path / 'annotation.tsv'
     report = tmp_path / 'selection.json'
     generate_annotation(gff, fai, output, mane_summary=summary, selection_report=report)
     with output.open() as stream:
         rows = list(csv.DictReader(stream, delimiter='\t'))
-    return rows, json.loads(report.read_text())
+    selection = json.loads(report.read_text())
+    assert len(rows) == len({row['#NAME'] for row in rows})
+    assert len(rows) == len({row['gene_id'] for row in selection['selected_transcripts']})
+    assert len(rows) == len(selection['selected_transcripts'])
+    return rows, selection
 
 
-def test_mane_select_and_plus_clinical_keep_ensembl_names_and_exon_pairs(tmp_path):
+def test_only_mane_select_is_kept_with_ensembl_name_and_exon_pairs(tmp_path):
     selected = transcript('ENST1', exons=((10, 30), (80, 100)))
     clinical = transcript('ENST2', exons=((10, 40), (80, 100)))
     other = transcript('ENST3', exons=((0, 150),), tags='tag=Ensembl_canonical')
@@ -96,13 +109,14 @@ def test_mane_select_and_plus_clinical_keep_ensembl_names_and_exon_pairs(tmp_pat
         [selected, clinical, other],
         [mane_row(selected, GRCh38_chr='NC_000001.11'), mane_row(clinical, 'MANE Plus Clinical')],
     )
-    assert [row['#NAME'] for row in rows] == ['GENE', 'GENE']
-    assert [row['EXON_END'] for row in rows] == ['30,100,', '40,100,']
+    assert [row['#NAME'] for row in rows] == ['GENE']
+    assert [row['EXON_END'] for row in rows] == ['30,100,']
     assert [(row['transcript_id'], row['source']) for row in report['selected_transcripts']] == [
         ('ENST1.1', 'MANE Select'),
-        ('ENST2.1', 'MANE Plus Clinical'),
     ]
     assert report['unusable_mane'] == []
+    assert report['ignored_mane'][0]['transcript_id'] == 'ENST2.1'
+    assert report['ignored_mane'][0]['reason'] == 'select_only_policy'
 
 
 def test_identical_selected_models_are_scored_once(tmp_path):
@@ -111,7 +125,7 @@ def test_identical_selected_models_are_scored_once(tmp_path):
         tmp_path, [selected, clinical], [mane_row(selected), mane_row(clinical, 'MANE Plus Clinical')]
     )
     assert len(rows) == 1
-    assert len(report['selected_transcripts']) == 2
+    assert len(report['selected_transcripts']) == 1
     assert {row['annotation_row'] for row in report['selected_transcripts']} == {1}
 
 
@@ -166,14 +180,34 @@ def test_plus_clinical_does_not_replace_a_missing_select_fallback(tmp_path):
     clinical = transcript('ENST1')
     fallback = transcript('ENST2', exons=((0, 200),), tags='tag=Ensembl_canonical')
     rows, report = run_annotation(tmp_path, [clinical, fallback], [mane_row(clinical, 'MANE Plus Clinical')])
-    assert len(rows) == 2
-    assert {row['source'] for row in report['selected_transcripts']} == {'MANE Plus Clinical', 'Ensembl canonical'}
+    assert len(rows) == 1
+    assert {row['source'] for row in report['selected_transcripts']} == {'Ensembl canonical'}
 
 
-def test_shared_symbols_do_not_merge_different_ensembl_genes(tmp_path):
+def test_shared_symbols_retain_one_gene_and_record_discarded_representative(tmp_path):
     rows, report = run_annotation(tmp_path, [transcript('ENST1'), transcript('ENST2', gene='ENSG2')])
-    assert len(rows) == 2
-    assert {row['gene_id'] for row in report['selected_transcripts']} == {'ENSG1', 'ENSG2'}
+    assert len(rows) == 1
+    assert {row['gene_id'] for row in report['selected_transcripts']} == {'ENSG1'}
+    assert report['symbol_collisions'][0]['symbol'] == 'GENE'
+    assert report['symbol_collisions'][0]['discarded'][0]['gene_id'] == 'ENSG2'
+
+
+def test_mane_select_wins_a_symbol_collision_with_a_different_ensembl_gene(tmp_path):
+    fallback = transcript('ENST1', tags='tag=Ensembl_canonical', cds=((10, 100),))
+    selected = transcript('ENST2', gene='ENSG2')
+    rows, report = run_annotation(tmp_path, [fallback, selected], [mane_row(selected)])
+    assert len(rows) == 1
+    assert report['selected_transcripts'][0]['gene_id'] == 'ENSG2'
+    assert report['symbol_collisions'][0]['discarded'][0]['gene_id'] == 'ENSG1'
+
+
+def test_shared_symbols_use_fallback_ranking_then_deterministic_ties(tmp_path):
+    first = transcript('ENST1', cds=((10, 40),))
+    second = transcript('ENST2', gene='ENSG2', cds=((10, 90),))
+    original = run_annotation(tmp_path, [first, second])
+    reordered = run_annotation(tmp_path, [first, second], reverse=True)
+    assert original == reordered
+    assert original[1]['selected_transcripts'][0]['gene_id'] == 'ENSG2'
 
 
 def test_selection_and_report_are_independent_of_gff_record_order(tmp_path):
@@ -274,10 +308,10 @@ def test_invalid_coding_geometry_is_rejected(tmp_path, exons, cds, message):
         run_annotation(tmp_path, [transcript('ENST1', exons=exons, cds=cds)])
 
 
-def test_same_gene_id_on_distinct_reference_loci_is_not_collapsed(tmp_path):
+def test_same_gene_id_on_distinct_reference_loci_has_one_row(tmp_path):
     rows, report = run_annotation(tmp_path, [transcript('ENST1'), transcript('ENST2', chrom='2')])
-    assert len(rows) == 2
-    assert {row['chromosome'] for row in report['selected_transcripts']} == {'chr1', 'chr2'}
+    assert len(rows) == 1
+    assert {row['chromosome'] for row in report['selected_transcripts']} == {'chr1'}
 
 
 def test_gene_canonical_declarations_remain_specific_to_each_reference_locus(tmp_path):
@@ -290,8 +324,16 @@ def test_gene_canonical_declarations_remain_specific_to_each_reference_locus(tmp
             ('ENSG1', '2', '+'): 'ENST2.1',
         },
     )
-    assert {row['transcript_id'] for row in report['selected_transcripts']} == {'ENST1.1', 'ENST2.1'}
+    assert {row['transcript_id'] for row in report['selected_transcripts']} == {'ENST1.1'}
     assert {row['source'] for row in report['selected_transcripts']} == {'Ensembl canonical'}
+
+
+def test_one_gene_with_different_locus_symbols_still_produces_one_row(tmp_path):
+    first = transcript('ENST1', symbol='OLD', tags='tag=Ensembl_canonical')
+    selected = transcript('ENST2', chrom='2', symbol='CURRENT')
+    rows, report = run_annotation(tmp_path, [first, selected], [mane_row(selected)])
+    assert [row['#NAME'] for row in rows] == ['CURRENT']
+    assert report['selected_transcripts'][0]['source'] == 'MANE Select'
 
 
 def test_mane_provenance_changes_even_if_selected_exons_are_identical(tmp_path):

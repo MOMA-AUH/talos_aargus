@@ -203,24 +203,27 @@ scoring. Reference FASTA/index, transcript tables, and the cache must be
 accessible on compute nodes and inside containers. Scoring runs `spliceai` from
 the Talos image PATH and always uses `ref_genome`. `GenerateFastSpliceAiAnnotation`
 builds exon models from the same `params.ensembl_gff` channel used by consequence
-annotation. It selects MANE Select and MANE Plus Clinical transcripts using the
-existing `params.mane` summary. MANE is matched by stable Ensembl gene/transcript
-IDs, with transcript version, chromosome, strand, and outer-bound checks against
-the GFF and reference. Gene symbols come from Ensembl gene records; aliases and
-renames in the MANE summary do not affect matching. The original summary is
-required during analysis because the prepared `mane.json` omits versions and loci.
+annotation. It selects MANE Select transcripts using the existing `params.mane`
+summary. MANE is matched by stable Ensembl gene/transcript IDs, with transcript
+version, chromosome, strand, and outer-bound checks against the GFF and reference.
+Gene symbols come from Ensembl gene records; aliases and renames in the MANE
+summary do not affect matching. The original summary is required during analysis
+because the prepared `mane.json` omits versions and loci.
 
-Each gene/reference-chromosome/strand group without a usable MANE Select model
-receives one fallback model, while usable MANE Plus Clinical models are retained.
+Each stable gene ID without a usable MANE Select model receives one Ensembl
+fallback model. MANE Plus Clinical does not add rows or override this choice.
 Fallback order is the gene's `canonical_transcript` declaration, a transcript
 tagged `Ensembl_canonical`, then APPRIS rank and longest CDS. APPRIS principal
 ranks 1–5 precede alternative ranks 1–2. CDS length sums coding intervals rather
 than including introns. Without a canonical or coding model, the longest exonic
-transcript is used. Remaining ties use longest exonic length then transcript ID.
-Stable gene IDs distinguish genes sharing a symbol; a symbol is used only to
-group parentless GFF models that provide no gene ID. Identical selected exon
-models are emitted once per gene/locus. Different MANE clinical models may
-intentionally produce multiple rows with the same gene symbol.
+transcript is used. Remaining ties use longest exonic length, reference contig
+order, and transcript ID. A gene represented at multiple loci still receives
+only one model. Parentless GFF models with no gene ID are grouped by symbol.
+
+The output has exactly one representative per retained gene ID and gene symbol.
+If different gene IDs share a symbol, a MANE Select representative wins over an
+Ensembl fallback; remaining ties use the same fallback ranking. The discarded
+gene representatives are recorded as `symbol_collisions` in the selection report.
 
 `transcript_selection.json` lists the selected versioned transcript IDs, their
 gene IDs and symbols, their annotation row numbers, selection sources, and MANE

@@ -1,7 +1,8 @@
 """Generate FastSpliceAI exon models from the workflow Ensembl GFF and reference.
 
-MANE Select and Plus Clinical identify preferred Ensembl exon models. Genes
-without a usable Select model use an Ensembl canonical/APPRIS/length fallback.
+MANE Select identifies preferred Ensembl exon models. Genes without a usable
+Select model use an Ensembl canonical/APPRIS/length fallback. Exactly one model
+is retained per gene ID and gene symbol across all reference loci.
 GFF coordinates are one-based closed; output starts are zero-based and ends exclusive.
 """
 
@@ -17,11 +18,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
-from typing import TextIO
+from typing import NamedTuple, TextIO
 from urllib.parse import unquote
 
 HEADER = '#NAME\tCHROM\tSTRAND\tTX_START\tTX_END\tEXON_START\tEXON_END\n'
-POLICY = 'talos/fastspliceai-transcript-selection/1'
+POLICY = 'talos/fastspliceai-transcript-selection/2'
 MANE_STATUSES = {'MANE Select', 'MANE Plus Clinical'}
 
 
@@ -136,6 +137,13 @@ class ManeTranscript:
     start: int
     end: int
     strand: str
+
+
+class _SelectionResult(NamedTuple):
+    selected: list[tuple[AnnotationModel, str]]
+    unusable: list[dict]
+    ignored: list[dict]
+    collisions: list[dict]
 
 
 def _version(identifier_version: str | None, explicit_version: str | None) -> str | None:
@@ -325,20 +333,29 @@ def _canonical_rank(model: AnnotationModel, genes: dict[tuple[str, str, str], Ge
     return 1 if 'Ensembl_canonical' in model.transcript.tags else 2
 
 
-def _fallback(
-    candidates: list[AnnotationModel], genes: dict[tuple[str, str, str], Gene]
-) -> tuple[AnnotationModel, str]:
-    chosen = min(
-        candidates,
-        key=lambda model: (
-            _canonical_rank(model, genes),
-            not bool(model.cds_length),
-            _appris_rank(model) if model.cds_length else 100,
-            -model.cds_length,
-            -sum(last - first for first, last in model.exons),
-            model.identifier,
-        ),
+def _fallback_rank(
+    model: AnnotationModel,
+    genes: dict[tuple[str, str, str], Gene],
+    reference_rank: dict[str, int],
+) -> tuple:
+    return (
+        _canonical_rank(model, genes),
+        not bool(model.cds_length),
+        _appris_rank(model) if model.cds_length else 100,
+        -model.cds_length,
+        -sum(last - first for first, last in model.exons),
+        reference_rank[model.transcript.chrom],
+        model.identifier,
+        model.gene_id,
     )
+
+
+def _fallback(
+    candidates: list[AnnotationModel],
+    genes: dict[tuple[str, str, str], Gene],
+    reference_rank: dict[str, int],
+) -> tuple[AnnotationModel, str]:
+    chosen = min(candidates, key=lambda model: _fallback_rank(model, genes, reference_rank))
     if _canonical_rank(chosen, genes) < 2:
         source = 'Ensembl canonical'
     elif chosen.cds_length and _appris_rank(chosen) < 100:
@@ -348,45 +365,92 @@ def _fallback(
     return chosen, source
 
 
+def _selection_record(model: AnnotationModel, source: str) -> dict:
+    return {
+        'gene_id': model.gene_id,
+        'symbol': model.symbol,
+        'transcript_id': model.identifier + (f'.{model.version}' if model.version is not None else ''),
+        'chromosome': model.transcript.chrom,
+        'strand': model.transcript.strand,
+        'source': source,
+    }
+
+
+def _classify_mane(
+    models: dict[str, AnnotationModel], mane: list[ManeTranscript]
+) -> tuple[dict[str, list[AnnotationModel]], list[dict], list[dict]]:
+    preferred = defaultdict(list)
+    unusable = []
+    ignored = []
+    for record in mane:
+        entry = {
+            'gene_id': record.gene_id,
+            'transcript_id': f'{record.identifier}.{record.version}',
+            'status': record.status,
+            'contig': record.contig,
+        }
+        if record.status != 'MANE Select':
+            ignored.append(entry | {'reason': 'select_only_policy'})
+            continue
+        candidate = models.get(record.identifier)
+        reason = _mane_mismatch(record, candidate)
+        if reason:
+            unusable.append(entry | {'reason': reason})
+        elif candidate is not None:
+            preferred[candidate.gene_id].append(candidate)
+    return preferred, unusable, ignored
+
+
+def _select_gene_representatives(
+    groups: dict[str, list[AnnotationModel]],
+    preferred: dict[str, list[AnnotationModel]],
+    genes: dict[tuple[str, str, str], Gene],
+    reference_rank: dict[str, int],
+) -> dict[str, list[tuple[AnnotationModel, str]]]:
+    by_symbol = defaultdict(list)
+    for gene_id, candidates in sorted(groups.items()):
+        choices = preferred[gene_id]
+        if len(choices) > 1:
+            raise ValueError(f'Multiple MANE Select transcripts for gene: {gene_id}')
+        choice = (choices[0], 'MANE Select') if choices else _fallback(candidates, genes, reference_rank)
+        by_symbol[choice[0].symbol].append(choice)
+    return by_symbol
+
+
+def _resolve_symbol_collisions(
+    by_symbol: dict[str, list[tuple[AnnotationModel, str]]],
+    genes: dict[tuple[str, str, str], Gene],
+    reference_rank: dict[str, int],
+) -> tuple[list[tuple[AnnotationModel, str]], list[dict]]:
+    selected = []
+    collisions = []
+    for symbol, choices in sorted(by_symbol.items()):
+        choices.sort(key=lambda item: (item[1] != 'MANE Select', _fallback_rank(item[0], genes, reference_rank)))
+        selected.append(choices[0])
+        if len(choices) > 1:
+            collisions.append(
+                {
+                    'symbol': symbol,
+                    'retained': _selection_record(*choices[0]),
+                    'discarded': [_selection_record(model, source) for model, source in choices[1:]],
+                }
+            )
+    return selected, collisions
+
+
 def _select_models(
     models: dict[str, AnnotationModel],
     genes: dict[tuple[str, str, str], Gene],
     mane: list[ManeTranscript],
-) -> tuple[list, list, int]:
+    reference_rank: dict[str, int],
+) -> _SelectionResult:
     groups = defaultdict(list)
-    preferred = defaultdict(list)
-    unusable = []
     for model in models.values():
-        groups[model.group].append(model)
-    for record in mane:
-        candidate = models.get(record.identifier)
-        reason = _mane_mismatch(record, candidate)
-        if reason:
-            unusable.append(
-                {
-                    'gene_id': record.gene_id,
-                    'transcript_id': f'{record.identifier}.{record.version}',
-                    'status': record.status,
-                    'contig': record.contig,
-                    'reason': reason,
-                }
-            )
-        elif candidate is not None:
-            preferred[candidate.group].append((candidate, record.status))
-    selected = []
-    fallbacks = 0
-    for group, candidates in sorted(groups.items()):
-        choices = preferred[group]
-        select_count = sum(source == 'MANE Select' for _model, source in choices)
-        if select_count > 1:
-            raise ValueError(f'Multiple MANE Select transcripts for gene/locus: {group}')
-        if not select_count:
-            fallbacks += 1
-            fallback, source = _fallback(candidates, genes)
-            if all(model.identifier != fallback.identifier for model, _source in choices):
-                choices.append((fallback, source))
-        selected.extend(choices)
-    return selected, unusable, fallbacks
+        groups[model.gene_id].append(model)
+    preferred, unusable, ignored = _classify_mane(models, mane)
+    by_symbol = _select_gene_representatives(groups, preferred, genes, reference_rank)
+    selected, collisions = _resolve_symbol_collisions(by_symbol, genes, reference_rank)
+    return _SelectionResult(selected, unusable, ignored, collisions)
 
 
 def generate_annotation(
@@ -401,9 +465,14 @@ def generate_annotation(
     lengths = _reference(reference_fai)
     genes, transcripts, exons, coding = _models(gff, lengths)
     models = _validated_models(genes, transcripts, exons, coding)
-    selected, unusable, fallbacks = _select_models(models, genes, _mane_records(mane_summary, lengths))
     rank = {chrom: index for index, chrom in enumerate(lengths)}
-    selected.sort(
+    selection = _select_models(
+        models,
+        genes,
+        _mane_records(mane_summary, lengths),
+        rank,
+    )
+    selection.selected.sort(
         key=lambda item: (
             rank[item[0].transcript.chrom],
             item[0].transcript.start,
@@ -413,35 +482,25 @@ def generate_annotation(
             item[1],
         )
     )
-    rows = {}
+    rows = []
     choices = []
-    for model, source in selected:
-        key = (model.group, model.fields)
-        if key not in rows:
-            rows[key] = len(rows) + 1
-        choices.append(
-            {
-                'gene_id': model.gene_id,
-                'symbol': model.symbol,
-                'transcript_id': model.identifier + (f'.{model.version}' if model.version is not None else ''),
-                'chromosome': model.transcript.chrom,
-                'strand': model.transcript.strand,
-                'source': source,
-                'annotation_row': rows[key],
-            }
-        )
+    for index, (model, source) in enumerate(selection.selected, 1):
+        rows.append(model.fields)
+        choices.append(_selection_record(model, source) | {'annotation_row': index})
     with output.open('w') as stream:
         stream.write(HEADER)
-        for _group, fields in rows:
+        for fields in rows:
             stream.write('\t'.join(fields) + '\n')
     if selection_report is not None:
         report = {
             'policy': POLICY,
             'mane_summary_sha256': hashlib.sha256(mane_summary.read_bytes()).hexdigest(),
             'annotation_rows': len(rows),
-            'fallback_genes': fallbacks,
+            'fallback_genes': sum(source != 'MANE Select' for _model, source in selection.selected),
             'selected_transcripts': choices,
-            'unusable_mane': unusable,
+            'unusable_mane': selection.unusable,
+            'ignored_mane': selection.ignored,
+            'symbol_collisions': selection.collisions,
         }
         selection_report.write_text(json.dumps(report, sort_keys=True, indent=2) + '\n')
 
