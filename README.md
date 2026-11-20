@@ -149,8 +149,11 @@ New annotations are combined with all existing cached annotations, including
 alleles absent from the current cohorts, and replace the published cache.
 One Talos pipeline runs at a time; no locking is used.
 
-Only sites with complete SpliceAI predictions enter the cache; numeric zero
-scores remain valid predictions. Each namespace is keyed by the GFF, generated
+The cache records every allele processed by a successful scoring task, including
+missing scores, incomplete predictions, and absent SpliceAI annotations. Those
+alleles are cache hits on later runs and are not scored again. Numeric zero
+scores are also retained. Failed scoring tasks do not update the shared cache.
+Each namespace is keyed by the GFF, generated
 annotation, reference FASTA/index, scorer source and model weights, runtime
 versions, prediction distance, and masking. Device and mixed precision do not
 change the identity. Changed resources select a new namespace;

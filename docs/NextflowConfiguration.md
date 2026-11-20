@@ -49,6 +49,11 @@ Exactly one row is retained per gene ID and gene symbol across reference loci.
 Plus Clinical records are ignored, and discarded representatives for shared
 symbols are recorded in the selection report.
 
+The FastSpliceAI cache tracks successfully processed alleles, including those
+with missing scores, incomplete predictions, or no SpliceAI annotation. All are
+treated as cache hits on subsequent runs. Failed scoring tasks remain retryable.
+Changed resources or scoring settings still select a new cache namespace.
+
 All processes use Slurm. Export deployment settings before starting Nextflow or
 the runner:
 

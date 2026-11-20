@@ -1,4 +1,4 @@
-include { shellQuote; completeFastSpliceAiPredictions } from '../common'
+include { shellQuote } from '../common'
 
 process CheckFastSpliceAiCache {
     cache false
@@ -11,9 +11,7 @@ process CheckFastSpliceAiCache {
         """
         set -euo pipefail
         if [[ -f ${shellQuote(cache_directory + '/cache.vcf.gz')} ]]; then
-            bcftools view --no-version -G -Ov ${shellQuote(cache_directory + '/cache.vcf.gz')} \\
-                | ${completeFastSpliceAiPredictions()} \\
-                | bcftools view --no-version -Oz -o old_cache.vcf.gz
+            bcftools view --no-version -G -Oz -o old_cache.vcf.gz ${shellQuote(cache_directory + '/cache.vcf.gz')}
         else
             bcftools view --no-version -h ${shellQuote(vcf)} | bcftools view --no-version -Oz -o old_cache.vcf.gz
         fi
