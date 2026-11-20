@@ -19,6 +19,7 @@ This README documents the parameters used in the nextflow configuration file. So
 | `ensembl_gff`             | Path in `large_files` to the Ensembl GFF3 file                                                                                                                                                                                         |
 | `gnomad_zip`              | Path in `large_files` to the echtvar annotation file from [Zenodo](https://zenodo.org/records/15222100)                                                                                                                                |
 | `fastspliceai_cache` | Cache root, default `<processed_annotations>/spliceai_cache`. Resource/scorer/selection identities automatically select subdirectories containing `cache.vcf.gz`, its index, `cache_identity.json` and `transcript_selection.json`. |
+| `fastspliceai_split_n` | Maximum cache-miss variants per scoring task, default 2,000,000; must be a positive integer. Scored splits are gathered into one cache update. Does not change cache identity. |
 | `fastspliceai_distance` | Prediction distance, default 500, allowed 0–4999. Changes automatically select a new cache namespace. |
 | `fastspliceai_mask` | Prediction mask, 0 or 1, default 0. Changes automatically select a new cache namespace. |
 | `fastspliceai_mixed_precision` | Enable `--mixed-precision`, default `false`. Does not change cache identity. |
@@ -53,18 +54,20 @@ the runner:
 
 ```bash
 export SLURM_ACCOUNT=your_account
-export SLURM_GPU_PARTITIONS=gpu-l40s,gpu-h200
+export SLURM_GPU_PARTITIONS=gpu-l40s,gpu-h200,gpu-short
 ```
 
 `SLURM_ACCOUNT` applies to CPU and GPU tasks and runner `sbatch` submissions.
 `SLURM_GPU_PARTITIONS` selects the partitions for `RunFastSpliceAi`, defaulting to
-`gpu-l40s,gpu-h200` when unset or empty. An unset `SLURM_ACCOUNT` uses Slurm's site
+`gpu-l40s,gpu-h200,gpu-short` when unset or empty. An unset `SLURM_ACCOUNT` uses Slurm's site
 default account. The shared account and `--gpus=1` are included automatically. Other
 resource and scoring settings are configured in Nextflow.
 
 Run the workflow with `-with-apptainer`. FastSpliceAI scoring defaults to 6 CPU
-cores, 16 GB RAM, and 8 hours. Apptainer scoring uses `--nv`. These GPU settings
-apply only to `RunFastSpliceAi`; fully cached runs skip that process.
+cores, 16 GB RAM, and 2 hours per cache-miss split. Apptainer scoring uses `--nv`.
+These GPU settings apply to `RunFastSpliceAi`; fully cached runs skip that process.
+The runner's scoring defaults use the same partitions and walltime, with
+`FASTSPLICEAI_QUEUE` and `FASTSPLICEAI_TIME` overrides available.
 
 For project-specific scoring settings, use the project's Nextflow configuration:
 
@@ -74,7 +77,7 @@ params.fastspliceai_mixed_precision = true
 process {
     withName: RunFastSpliceAi {
         memory = 24.GB
-        time = '12:00:00'
+        time = '02:00:00'
     }
 }
 ```

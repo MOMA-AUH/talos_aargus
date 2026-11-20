@@ -5,6 +5,7 @@ nextflow.enable.dsl=2
 include { CollectCohortFastSpliceAiSites } from './modules/fastspliceai/CollectCohortFastSpliceAiSites/main'
 include { CollectFastSpliceAiSites } from './modules/fastspliceai/CollectFastSpliceAiSites/main'
 include { CheckFastSpliceAiCache } from './modules/fastspliceai/CheckFastSpliceAiCache/main'
+include { SplitFastSpliceAiMisses } from './modules/fastspliceai/SplitFastSpliceAiMisses/main'
 include { RunFastSpliceAi } from './modules/fastspliceai/RunFastSpliceAi/main'
 include { CompleteFastSpliceAi } from './modules/fastspliceai/CompleteFastSpliceAi/main'
 include { AnnotateWithFastSpliceAi } from './modules/fastspliceai/AnnotateWithFastSpliceAi/main'
@@ -51,11 +52,35 @@ workflow FASTSPLICEAI {
         misses: it[4].text.trim().toInteger() > 0
         hits: true
     }
-    RunFastSpliceAi(ch_checked.misses, ch_scoring_reference, ch_fai, ch_annotation)
-    ch_cached = ch_checked.hits.map { old_cache, old_index, misses, misses_index, count ->
-        tuple(old_cache, old_index, misses, misses_index)
+    // Keep the old cache out of GPU tasks and split only the union of missing sites.
+    ch_to_split = ch_checked.misses.map { old_cache, old_index, misses, misses_index, count ->
+        tuple(misses, misses_index, count)
     }
-    CompleteFastSpliceAi(RunFastSpliceAi.out.mix(ch_cached), ch_cache, FastSpliceAiCacheIdentity.out.first(), ch_selection)
+    ch_old_cache = ch_checked.misses.map { old_cache, old_index, misses, misses_index, count ->
+        tuple('cache', old_cache, old_index)
+    }
+    SplitFastSpliceAiMisses(ch_to_split)
+    ch_shards = SplitFastSpliceAiMisses.out.map { vcfs, indices ->
+        tuple('cache', vcfs.sort { it.name }.collect { vcf ->
+            tuple(vcf.name - 'shard_' - '.vcf.gz', vcf, file("${vcf}.tbi"))
+        })
+    }
+    ch_expected = ch_shards.join(ch_old_cache).map { key, shards, old_cache, old_index ->
+        tuple(key, old_cache, old_index, shards.collect { it[0] })
+    }
+    RunFastSpliceAi(ch_shards.flatMap { key, shards -> shards }, ch_scoring_reference, ch_fai, ch_annotation)
+    ch_scored = RunFastSpliceAi.out.collect(flat: false).map { shards -> tuple('cache', shards) }
+    ch_gathered = ch_scored.join(ch_expected).map { key, shards, old_cache, old_index, expected_ids ->
+        def ordered = shards.sort { a, b -> a[0] <=> b[0] }
+        if (ordered.collect { it[0] } != expected_ids.sort()) {
+            throw new IllegalArgumentException('FastSpliceAI scored shards do not match the expected shard IDs')
+        }
+        tuple(old_cache, old_index, ordered.collect { it[1] }, ordered.collect { it[2] })
+    }
+    ch_cached = ch_checked.hits.map { old_cache, old_index, misses, misses_index, count ->
+        tuple(old_cache, old_index, [misses], [misses_index])
+    }
+    CompleteFastSpliceAi(ch_gathered.mix(ch_cached), ch_cache, FastSpliceAiCacheIdentity.out.first(), ch_selection)
 
     // Apply the completed cache to each original per-split annotated VCF.
     ch_completed_cache = CompleteFastSpliceAi.out.cache.first()

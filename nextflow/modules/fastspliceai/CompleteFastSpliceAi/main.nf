@@ -1,4 +1,4 @@
-include { shellQuote; completeFastSpliceAiPredictions } from '../common'
+include { shellQuote; quoteVcfInputs; completeFastSpliceAiPredictions } from '../common'
 
 process CompleteFastSpliceAi {
     publishDir { cache_directory }, mode: 'copy', overwrite: true
@@ -14,7 +14,7 @@ process CompleteFastSpliceAi {
     script:
         """
         set -euo pipefail
-        bcftools concat --no-version -a -Ov ${shellQuote(old_cache)} ${shellQuote(scored)} \\
+        bcftools concat --no-version -a -Ov ${shellQuote(old_cache)} ${quoteVcfInputs(scored)} \\
             | ${completeFastSpliceAiPredictions()} \\
             | bcftools sort -Ou | bcftools norm --no-version -d exact -Oz -o cache.vcf.gz
         bcftools index -t cache.vcf.gz

@@ -194,6 +194,12 @@
           "type": "string",
           "description": "Cache root, default <processed_annotations>/spliceai_cache. Resource and scorer hashes select identity subdirectories automatically. One pipeline runs at a time."
         },
+        "fastspliceai_split_n": {
+          "type": "integer",
+          "default": 2000000,
+          "minimum": 1,
+          "description": "Maximum number of cache-miss variants per FastSpliceAI scoring task. Does not change cache identity."
+        },
         "fastspliceai_distance": {
           "type": "integer",
           "default": 500,

@@ -1,20 +1,23 @@
 include { shellQuote } from '../common'
 
 process RunFastSpliceAi {
+    tag "${shard_id}"
+
     input:
-        tuple path(old_cache), path(old_index), path(misses), path(misses_index), path(missing_count)
+        tuple val(shard_id), path(misses), path(misses_index)
         path reference
         path reference_fai
         path annotation
     output:
-        tuple path(old_cache), path(old_index), path('scored.vcf.gz'), path('scored.vcf.gz.tbi')
+        tuple val(shard_id), path("scored_${shard_id}.vcf.gz"), path("scored_${shard_id}.vcf.gz.tbi")
     script:
         def precision = params.fastspliceai_mixed_precision ? '--mixed-precision' : ''
+        def scored = "scored_${shard_id}.vcf.gz"
         """
         set -euo pipefail
         spliceai \\
             -I ${shellQuote(misses)} \\
-            -O scored.vcf.gz \\
+            -O ${shellQuote(scored)} \\
             -R ${shellQuote(reference)} \\
             -A ${shellQuote(annotation)} \\
             -D ${shellQuote(params.fastspliceai_distance)} \\
@@ -25,6 +28,6 @@ process RunFastSpliceAi {
             --output-type z \\
             --overwrite-existing \\
             ${precision}
-        bcftools index -t scored.vcf.gz
+        bcftools index -t ${shellQuote(scored)}
         """
 }

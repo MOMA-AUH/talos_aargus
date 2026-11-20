@@ -123,10 +123,13 @@ All input splits from all cohorts are normalized first, including existing
 the splits within each cohort into one indexed, site-only VCF, then combines
 those cohort VCFs into the distinct global allele set. Both gathers stream
 through bcftools, avoiding temporary site-only files for every split.
-The global sites are intersected with the existing cache. Only cache misses
-reach one FastSpliceAI scoring task. The predictions
-are then applied back to each cohort's splits without combining samples or
-changing genotypes. Fully cached runs do not submit a scoring job.
+The global sites are intersected with the existing cache. Cache misses are
+split into indexed VCFs of at most 2,000,000 variants, controlled by
+`fastspliceai_split_n`. Each split runs as an independent FastSpliceAI scoring
+task with a default two-hour walltime. All scored splits are gathered before
+one cache update. The predictions are then applied back to each cohort's
+splits without combining samples or changing genotypes. Fully cached runs do
+not submit splitting or scoring jobs.
 
 The existing per-split `SplitVcf`, `NormaliseAndRegionFilterVcf`,
 `AnnotateWithEchtvar`, and `AnnotateCsqWithBcftools` processes are unchanged.
@@ -135,9 +138,10 @@ annotation path continues. Its completed cache is applied to each split after
 the existing Echtvar and CSQ steps.
 
 The `FASTSPLICEAI` subworkflow in `nextflow/fastspliceai.nf` gathers splits per
-cohort, gathers cohorts, finds cache misses, scores missing sites, extends the
-cache, and applies it to the annotated splits. It receives the normalized VCFs,
-the per-split annotated VCFs, and the reference channel from `ANNOTATION`.
+cohort, gathers cohorts, finds and splits cache misses, scores the splits,
+gathers their predictions, extends the cache, and applies it to the annotated
+splits. It receives the normalized VCFs, the per-split annotated VCFs, and the
+reference channel from `ANNOTATION`.
 Its processes live in `nextflow/modules/fastspliceai/<Process>/main.nf`, following
 the same layout as the Talos process modules. The published cache is
 `<processed_annotations>/spliceai_cache/<identity>/cache.vcf.gz` with a `.tbi` index.
