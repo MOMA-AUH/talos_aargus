@@ -1,7 +1,7 @@
 include { shellQuote } from '../common'
 
 process GenerateFastSpliceAiAnnotation {
-    cache false
+    cache 'deep'
 
     input:
         path gff

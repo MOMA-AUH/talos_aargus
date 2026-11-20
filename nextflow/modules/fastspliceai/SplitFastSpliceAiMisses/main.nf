@@ -1,6 +1,7 @@
 include { shellQuote } from '../common'
 
 process SplitFastSpliceAiMisses {
+    cache 'deep'
     memory 2.GB
     cpus 1
 
