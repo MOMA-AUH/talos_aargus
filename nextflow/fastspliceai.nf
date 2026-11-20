@@ -22,12 +22,12 @@ workflow FASTSPLICEAI {
     main:
     def cache = file(params.fastspliceai_cache).toFile().canonicalPath
     log.info "FastSpliceAI cache: ${cache}"
-    ch_scoring_reference = ch_ref_genome.first()
+    ch_scoring_reference = ch_ref_genome
     ch_fai = ch_scoring_reference.map { reference -> file("${reference}.fai", checkIfExists: true) }
     ch_mane_summary = channel.fromPath(params.mane, checkIfExists: true).first()
     GenerateFastSpliceAiAnnotation(ch_gff, ch_fai, ch_mane_summary)
-    ch_annotation = GenerateFastSpliceAiAnnotation.out.annotation.first()
-    ch_selection = GenerateFastSpliceAiAnnotation.out.selection.first()
+    ch_annotation = GenerateFastSpliceAiAnnotation.out.annotation
+    ch_selection = GenerateFastSpliceAiAnnotation.out.selection
     FastSpliceAiCacheIdentity(ch_gff, ch_annotation, ch_scoring_reference, ch_fai, ch_selection,
         params.fastspliceai_distance, params.fastspliceai_mask)
     ch_cache = FastSpliceAiCacheIdentity.out.map { identity ->
@@ -35,7 +35,7 @@ workflow FASTSPLICEAI {
         def directory = "${cache}/${record.key}"
         log.info "FastSpliceAI cache identity: ${directory}"
         directory
-    }.first()
+    }
 
     // Gather normalized sites across splits and cohorts without combining samples.
     ch_cohort_inputs = ch_normalized.groupTuple(by: 0).map { cohort, vcfs, indices ->
@@ -80,7 +80,7 @@ workflow FASTSPLICEAI {
     ch_cached = ch_checked.hits.map { old_cache, old_index, misses, misses_index, count ->
         tuple(old_cache, old_index, [misses], [misses_index])
     }
-    CompleteFastSpliceAi(ch_gathered.mix(ch_cached), ch_cache, FastSpliceAiCacheIdentity.out.first(), ch_selection)
+    CompleteFastSpliceAi(ch_gathered.mix(ch_cached), ch_cache, FastSpliceAiCacheIdentity.out, ch_selection)
 
     // Apply the completed cache to each original per-split annotated VCF.
     ch_completed_cache = CompleteFastSpliceAi.out.cache.first()

@@ -250,12 +250,12 @@ workflow TALOS {
             ]
         }
         effective
-    }.first()
+    }
     ch_effective = annotation_performed
-        ? ch_effective_base.combine(ch_fastspliceai_annotation.first()).map { actual, annotation ->
+        ? ch_effective_base.combine(ch_fastspliceai_annotation).map { actual, annotation ->
             actual.resource_paths.fastspliceai_annotation = annotation.toAbsolutePath().toString()
             actual
-        }
+        }.first()
         : ch_effective_base
     def declarations = null
     if (params.aargus_metadata_spec) {
@@ -266,7 +266,7 @@ workflow TALOS {
         selectedPreparedMetadata(actual, prepared_catalog, declarations)
     }
     WriteWorkflowMetadataSpecification(ch_prepared_specification)
-    WorkflowMetadata(ch_metadata_inputs, WriteWorkflowMetadataSpecification.out.first(),
+    WorkflowMetadata(ch_metadata_inputs, WriteWorkflowMetadataSpecification.out,
         file(workflow.outputDir).toAbsolutePath().toString(), ch_effective, timestamp,
         ch_effective.map { actual ->
             actual.resource_paths.fastspliceai_annotation ? [file(actual.resource_paths.fastspliceai_annotation)] : []
